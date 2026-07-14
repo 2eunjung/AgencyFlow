@@ -263,7 +263,7 @@ def api_request(environ, start_response):
                     user = current_user(environ)
                     if not core.is_admin(user):
                         return error_json(start_response, "Admin login required.", HTTPStatus.UNAUTHORIZED)
-                    core.create_department(conn, payload.get("name"))
+                    core.create_department(conn, payload.get("name"), payload.get("color"))
                     conn.commit()
                     return json_response(start_response, {"ok": True, "departments": core.get_departments(conn)})
                 if method == "POST" and path == "/api/company-holidays":
@@ -323,6 +323,13 @@ def api_request(environ, start_response):
                     return json_response(start_response, {"ok": True})
                 if method == "PUT" and path == "/api/login-user":
                     return json_response(start_response, {"ok": True})
+                if method == "PUT" and path.startswith("/api/company-holidays/"):
+                    user = current_user(environ)
+                    if not core.is_admin(user):
+                        return error_json(start_response, "Admin login required.", HTTPStatus.UNAUTHORIZED)
+                    core.update_company_holiday(conn, unquote(path.split("/api/company-holidays/", 1)[1]), payload)
+                    conn.commit()
+                    return json_response(start_response, {"ok": True, "holidays": core.company_holidays(conn)})
                 if method == "PUT" and path.startswith("/api/leaves/"):
                     user = current_user(environ)
                     if not core.is_admin(user):
@@ -342,7 +349,7 @@ def api_request(environ, start_response):
                     user = current_user(environ)
                     if not core.is_admin(user):
                         return error_json(start_response, "Admin login required.", HTTPStatus.UNAUTHORIZED)
-                    core.update_department(conn, unquote(path.split("/api/departments/", 1)[1]), payload.get("name"))
+                    core.update_department(conn, unquote(path.split("/api/departments/", 1)[1]), payload.get("name"), payload.get("color"))
                     conn.commit()
                     return json_response(start_response, {"ok": True, "departments": core.get_departments(conn), "users": core.get_users(conn)})
             if method == "DELETE":
@@ -355,6 +362,13 @@ def api_request(environ, start_response):
                 if path == "/api/login-user":
                     core.clear_session_token(auth_token(environ))
                     return json_response(start_response, {"ok": True})
+                if path.startswith("/api/company-holidays/"):
+                    user = current_user(environ)
+                    if not core.is_admin(user):
+                        return error_json(start_response, "Admin login required.", HTTPStatus.UNAUTHORIZED)
+                    core.delete_company_holiday(conn, unquote(path.split("/api/company-holidays/", 1)[1]))
+                    conn.commit()
+                    return json_response(start_response, {"ok": True, "holidays": core.company_holidays(conn)})
                 if path.startswith("/api/departments/"):
                     user = current_user(environ)
                     if not core.is_admin(user):

@@ -336,19 +336,19 @@ class SQLiteProjectRepository {
     return this.getDepartments();
   }
 
-  async createDepartment(name) {
+  async createDepartment(name, color = "#d9eadf") {
     const result = await this.api("/departments", {
       method: "POST",
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, color }),
     });
     this.departmentsCache = this.clone(result.departments || []);
     return result;
   }
 
-  async updateDepartment(id, name) {
+  async updateDepartment(id, name, color = "#d9eadf") {
     const result = await this.api(`/departments/${encodeURIComponent(id)}`, {
       method: "PUT",
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, color }),
     });
     this.departmentsCache = this.clone(result.departments || []);
     if (result.users) this.usersCache = this.clone(result.users);
@@ -435,6 +435,23 @@ class SQLiteProjectRepository {
     const result = await this.api("/company-holidays", {
       method: "POST",
       body: JSON.stringify(payload),
+    });
+    this.companyHolidaysCache = this.clone(result.holidays || []);
+    return result;
+  }
+
+  async updateCompanyHoliday(id, payload) {
+    const result = await this.api(`/company-holidays/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    this.companyHolidaysCache = this.clone(result.holidays || []);
+    return result;
+  }
+
+  async deleteCompanyHoliday(id) {
+    const result = await this.api(`/company-holidays/${encodeURIComponent(id)}`, {
+      method: "DELETE",
     });
     this.companyHolidaysCache = this.clone(result.holidays || []);
     return result;
@@ -544,6 +561,7 @@ let loginUser = "";
 let currentUser = null;
 let vacationCursor = { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
 let vacationWeekAnchor = todayDate();
+let editingCompanyHolidayId = "";
 const KOREA_PUBLIC_HOLIDAYS = [
   { date: "2026-01-01", title: "신정" },
   { date: "2026-02-16", title: "설날 연휴" },
@@ -1121,7 +1139,9 @@ function updateNavAccess() {
     const authMenu = item.dataset.authMenu || "";
     const isParent = item.classList.contains("nav-parent");
     const showLockedMenu = !currentUser && (authMenu === "attendance" || authMenu === "basic");
-    const shouldShow = currentUser || showLockedMenu;
+    const isAdminOnly = item.classList.contains("admin-only");
+    const isAdminSection = authMenu === "basic";
+    const shouldShow = isAdminSection && currentUser && !isAdmin() ? false : isAdminOnly && !isAdmin() ? false : currentUser || showLockedMenu;
     item.classList.toggle("hidden", !shouldShow);
     if (!item.dataset.originalLabel) item.dataset.originalLabel = item.textContent.trim();
     const isSubtleLocked = showLockedMenu && !isParent && subtleLockedViews.has(item.dataset.view || "");
@@ -3252,6 +3272,20 @@ function departmentOptions(selected = "") {
     .join("");
 }
 
+function normalizeColorValue(value, fallback = "#d9eadf") {
+  const color = String(value || "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toLowerCase() : fallback;
+}
+
+function departmentColor(name) {
+  const department = (projectRepository.getDepartments?.() || []).find((item) => item.name === name);
+  return normalizeColorValue(department?.color);
+}
+
+function departmentEventStyle(name) {
+  return ` style="background:${escapeAttr(departmentColor(name))}"`;
+}
+
 function populateDepartmentSelect(selectId, selected = "") {
   const select = $(selectId);
   if (!select) return;
@@ -3349,7 +3383,7 @@ async function submitLogin(event) {
     if (isAdmin()) void refreshDepartments();
   } catch (error) {
     console.error(error);
-    setText("loginMessage", "서버에 연결할 수 없습니다. sqlite_server.py 실행 여부를 확인해 주세요.");
+    setText("loginMessage", error.message || "서버에 연결할 수 없습니다. sqlite_server.py 실행 여부를 확인해 주세요.");
   }
 }
 
@@ -3609,13 +3643,13 @@ function filterMembers(users) {
 function renderDepartments() {
   if (!isAdmin()) return;
   const departments = projectRepository.getDepartments?.() || [];
-  setText("departmentTotalCount", departments.length.toLocaleString("ko-KR"));
   const rows = $("departmentRows");
   if (!rows) return;
   rows.innerHTML =
     departments
       .map((department) => `<tr>
       <td>${escapeHtml(department.name || "-")}</td>
+      <td><input class="department-color-input" data-department-color="${escapeAttr(department.id)}" type="color" value="${escapeAttr(normalizeColorValue(department.color))}" aria-label="${escapeAttr(department.name || "부서")} 색상" /></td>
       <td>${Number(department.userCount || 0).toLocaleString("ko-KR")}</td>
       <td>${escapeHtml(department.createdAt || "-")}</td>
       <td>
@@ -3623,7 +3657,10 @@ function renderDepartments() {
         <button class="ghost-btn danger" data-department-delete="${escapeAttr(department.id)}" type="button">삭제</button>
       </td>
     </tr>`)
-      .join("") || '<tr><td colspan="4" class="empty-cell">등록된 부서가 없습니다.</td></tr>';
+      .join("") || '<tr><td colspan="5" class="empty-cell">등록된 부서가 없습니다.</td></tr>';
+  rows.querySelectorAll("[data-department-color]").forEach((input) => {
+    input.addEventListener("change", () => changeDepartmentColor(input.dataset.departmentColor, input.value));
+  });
   rows.querySelectorAll("[data-department-edit]").forEach((button) => {
     button.addEventListener("click", () => editDepartment(button.dataset.departmentEdit));
   });
@@ -3648,7 +3685,7 @@ async function addDepartment() {
   const name = prompt("추가할 부서명을 입력해 주세요.");
   if (!name || !name.trim()) return;
   try {
-    await projectRepository.createDepartment(name.trim());
+    await projectRepository.createDepartment(name.trim(), "#d9eadf");
     renderDepartments();
   } catch (error) {
     console.error(error);
@@ -3663,12 +3700,27 @@ async function editDepartment(id) {
   const name = prompt("수정할 부서명을 입력해 주세요.", department.name || "");
   if (!name || !name.trim() || name.trim() === department.name) return;
   try {
-    await projectRepository.updateDepartment(id, name.trim());
+    await projectRepository.updateDepartment(id, name.trim(), normalizeColorValue(department.color));
     renderDepartments();
     renderBasicManagement();
   } catch (error) {
     console.error(error);
     alert(error.message || "부서 수정 중 오류가 발생했습니다.");
+  }
+}
+
+async function changeDepartmentColor(id, color) {
+  if (!isAdmin()) return;
+  const department = (projectRepository.getDepartments?.() || []).find((item) => String(item.id) === String(id));
+  if (!department) return;
+  try {
+    await projectRepository.updateDepartment(id, department.name, normalizeColorValue(color, department.color || "#d9eadf"));
+    renderDepartments();
+    renderVacationSchedule();
+  } catch (error) {
+    console.error(error);
+    alert(error.message || "부서 색상 저장 중 오류가 발생했습니다.");
+    renderDepartments();
   }
 }
 
@@ -3907,7 +3959,7 @@ function filteredVacationRequests() {
   const query = vacationSearchQuery();
   return projectRepository.getVacationSchedule().filter((request) => {
     if (!query) return true;
-    return [request.department, request.userName, request.userId, request.type, request.reason, request.status]
+    return [request.department, request.userName, request.userId, request.type, request.reason]
       .join(" ")
       .toLowerCase()
       .includes(query);
@@ -3937,7 +3989,7 @@ function vacationHolidaysForRange(start, end) {
   const company = projectRepository.getCompanyHolidays?.() || [];
   return [
     ...KOREA_PUBLIC_HOLIDAYS.map((holiday) => ({ ...holiday, kind: "공휴일" })),
-    ...company.map((holiday) => ({ ...holiday, kind: "회사휴일" })),
+    ...company.map((holiday) => ({ ...holiday, kind: holiday.kind || "회사휴일" })),
   ].filter((holiday) => {
     const date = String(holiday.date || "");
     return date >= start && date <= end;
@@ -3952,6 +4004,11 @@ function vacationHolidaysForMonth(year, month) {
 
 function vacationHolidayLabel(holiday) {
   return `${holiday.kind || "휴일"} · ${holiday.title || "-"}`;
+}
+
+function companyHolidayEventAttributes(holiday) {
+  if (!holiday?.id) return "";
+  return ` role="button" tabindex="0" data-company-holiday-id="${escapeHtml(holiday.id)}"`;
 }
 
 function renderVacationCalendarGrid() {
@@ -3977,12 +4034,11 @@ function renderVacationCalendarGrid() {
     const dayHolidays = inMonth ? holidays.filter((holiday) => holiday.date === date) : [];
     cells.push(`<div class="schedule-day ${inMonth ? "" : "is-outside"} ${date === today ? "is-today" : ""}">
       <span>${inMonth ? dayNumber : ""}</span>
-      ${dayHolidays.map((holiday) => `<div class="schedule-event is-holiday">
+      ${dayHolidays.map((holiday) => `<div class="schedule-event is-holiday"${companyHolidayEventAttributes(holiday)}>
         <strong class="schedule-event-name">${escapeHtml(vacationHolidayLabel(holiday))}</strong>
       </div>`).join("")}
-      ${dayRequests.map((request) => `<div class="schedule-event">
+      ${dayRequests.map((request) => `<div class="schedule-event"${departmentEventStyle(request.department)}>
         <strong class="schedule-event-name">${escapeHtml(vacationEventLabel(request))}</strong>
-        <small class="schedule-event-meta">${escapeHtml(request.status || "대기")}</small>
       </div>`).join("")}
     </div>`);
   }
@@ -4012,6 +4068,8 @@ function renderVacationScheduleRows() {
     (a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")) || String(a.userName || "").localeCompare(String(b.userName || ""), "ko")
   );
   const holidayRows = vacationHolidaysForRange(start, end).map((holiday) => ({
+    id: holiday.id,
+    isCompanyHoliday: Boolean(holiday.id),
     startDate: holiday.date,
     endDate: holiday.date,
     department: holiday.kind,
@@ -4023,22 +4081,25 @@ function renderVacationScheduleRows() {
   tbody.innerHTML = rows.length
     ? rows
         .map((request) => {
-          const status = request.status || "대기";
-          return `<tr>
+          const rowAttrs = request.isCompanyHoliday
+            ? ` data-company-holiday-id="${escapeHtml(request.id)}"`
+            : ` style="background:${escapeAttr(departmentColor(request.department))}"`;
+          return `<tr${rowAttrs}>
         <td>${escapeHtml(formatLeaveDateRange(request))}</td>
         <td>${escapeHtml(request.department || "-")}</td>
         <td>${escapeHtml(request.userName || request.userId || "-")}</td>
         <td>${escapeHtml(request.type || "-")}</td>
-        <td><span class="status-badge ${leaveStatusClass(status)}">${escapeHtml(status)}</span></td>
       </tr>`;
         })
         .join("")
-    : '<tr><td colspan="5" class="empty-cell">등록된 휴가 일정이 없습니다.</td></tr>';
+    : '<tr><td colspan="4" class="empty-cell">등록된 휴가 일정이 없습니다.</td></tr>';
 }
 
 function renderVacationSchedule() {
   if (!$("vacationScheduleView")) return;
-  $("companyHolidayForm")?.classList.toggle("hidden", !isAdmin());
+  ["companyHolidayAddBtn", "companyHolidayAddBtnList"].forEach((id) => {
+    $(id)?.classList.toggle("hidden", !isAdmin());
+  });
   renderVacationCalendarGrid();
   renderVacationScheduleRows();
 }
@@ -4046,6 +4107,7 @@ function renderVacationSchedule() {
 async function refreshVacationSchedule() {
   try {
     if (currentUser) {
+      if (isAdmin()) await projectRepository.refreshDepartments();
       await projectRepository.refreshVacationSchedule();
     } else {
       projectRepository.vacationScheduleCache = [];
@@ -4073,23 +4135,65 @@ function moveVacationList(amount) {
   renderVacationSchedule();
 }
 
-async function addCompanyHoliday() {
+function findCompanyHoliday(id) {
+  return (projectRepository.getCompanyHolidays?.() || []).find((holiday) => String(holiday.id) === String(id));
+}
+
+function openCompanyHolidayDialog(holidayId = "") {
+  if (!isAdmin()) return;
+  const holiday = holidayId ? findCompanyHoliday(holidayId) : null;
+  editingCompanyHolidayId = holiday ? String(holiday.id) : "";
+  setText("companyHolidayDialogTitle", holiday ? "휴일 수정" : "휴일 추가");
+  setValue("companyHolidayDialogDate", holiday?.date || todayDate());
+  setValue("companyHolidayDialogKind", holiday?.kind || "회사휴일");
+  setValue("companyHolidayDialogName", holiday?.title || "");
+  setText("companyHolidayDialogMessage", "");
+  $("companyHolidayDeleteBtn")?.classList.toggle("hidden", !holiday);
+  $("companyHolidayDialog")?.showModal();
+}
+
+function closeCompanyHolidayDialog() {
+  editingCompanyHolidayId = "";
+  $("companyHolidayDeleteBtn")?.classList.add("hidden");
+  $("companyHolidayDialog")?.close();
+}
+
+async function saveCompanyHoliday(event) {
+  event?.preventDefault();
   if (!isAdmin()) return;
   const payload = {
-    date: valueOf("companyHolidayDate"),
-    title: valueOf("companyHolidayTitle").trim(),
+    date: valueOf("companyHolidayDialogDate"),
+    kind: valueOf("companyHolidayDialogKind") || "회사휴일",
+    title: valueOf("companyHolidayDialogName").trim(),
   };
   if (!payload.date || !payload.title) {
-    alert("회사 휴일 일자와 이름을 입력해 주세요.");
+    setText("companyHolidayDialogMessage", "휴일 일자와 이름을 입력해 주세요.");
     return;
   }
   try {
-    await projectRepository.createCompanyHoliday(payload);
-    setValue("companyHolidayTitle", "");
+    if (editingCompanyHolidayId) {
+      await projectRepository.updateCompanyHoliday(editingCompanyHolidayId, payload);
+    } else {
+      await projectRepository.createCompanyHoliday(payload);
+    }
+    closeCompanyHolidayDialog();
     renderVacationSchedule();
   } catch (error) {
     console.error(error);
-    alert("회사 휴일 등록 중 오류가 발생했습니다.");
+    setText("companyHolidayDialogMessage", error.message || "휴일 저장 중 오류가 발생했습니다.");
+  }
+}
+
+async function deleteCompanyHoliday() {
+  if (!isAdmin() || !editingCompanyHolidayId) return;
+  if (!confirm("등록한 휴일을 삭제할까요?")) return;
+  try {
+    await projectRepository.deleteCompanyHoliday(editingCompanyHolidayId);
+    closeCompanyHolidayDialog();
+    renderVacationSchedule();
+  } catch (error) {
+    console.error(error);
+    setText("companyHolidayDialogMessage", error.message || "휴일 삭제 중 오류가 발생했습니다.");
   }
 }
 
@@ -4863,7 +4967,6 @@ document.addEventListener("input", (event) => {
   if (event.target.closest(".detail-main-grid")) updateDetailFilledState();
   if (event.target.id === "searchInput") renderRows();
   if (event.target.id === "memberSearchInput") renderBasicManagement();
-  if (event.target.id === "companyHolidayDate" || event.target.id === "companyHolidayTitle") renderVacationSchedule();
   if (event.target.id === "detailSearchInput") {
     const project = selectedProject();
     if (!project) return;
@@ -4886,7 +4989,24 @@ document.addEventListener("change", (event) => {
 });
 
 on("departmentAddBtn", "click", addDepartment);
-on("companyHolidayAddBtn", "click", addCompanyHoliday);
+on("companyHolidayAddBtn", "click", () => openCompanyHolidayDialog());
+on("companyHolidayAddBtnList", "click", () => openCompanyHolidayDialog());
+on("closeCompanyHolidayDialog", "click", closeCompanyHolidayDialog);
+on("companyHolidayForm", "submit", saveCompanyHoliday);
+on("companyHolidayDeleteBtn", "click", deleteCompanyHoliday);
+
+document.addEventListener("click", (event) => {
+  const holidayTarget = event.target.closest?.("[data-company-holiday-id]");
+  if (holidayTarget) openCompanyHolidayDialog(holidayTarget.dataset.companyHolidayId);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const holidayTarget = event.target.closest?.("[data-company-holiday-id]");
+  if (!holidayTarget) return;
+  event.preventDefault();
+  openCompanyHolidayDialog(holidayTarget.dataset.companyHolidayId);
+});
 
 on("detailSearchInput", "keydown", (event) => {
   if (event.key === "Enter") event.preventDefault();

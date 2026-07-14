@@ -31,6 +31,15 @@ SESSIONS = {}
 LOGIN_FAILURE_COUNT = 0
 LOGIN_LOCKED = False
 DEFAULT_DEPARTMENTS = ("경영관리", "영업", "pm", "디자인", "퍼블리싱", "프로그램", "유지보수")
+DEFAULT_DEPARTMENT_COLORS = {
+    "경영관리": "#d9eadf",
+    "영업": "#fdecc8",
+    "pm": "#dbeafe",
+    "디자인": "#f3d9fa",
+    "퍼블리싱": "#d9f99d",
+    "프로그램": "#cffafe",
+    "유지보수": "#fee2e2",
+}
 PDF_DANGEROUS_MARKERS = (
     b"/JavaScript",
     b"/JS",
@@ -363,22 +372,30 @@ def ensure_db():
             CREATE TABLE IF NOT EXISTS departments (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               name TEXT NOT NULL UNIQUE,
+              color TEXT NOT NULL DEFAULT '#d9eadf',
               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        department_columns = [row["name"] for row in conn.execute("PRAGMA table_info(departments)").fetchall()]
+        if "color" not in department_columns:
+            conn.execute("ALTER TABLE departments ADD COLUMN color TEXT NOT NULL DEFAULT '#d9eadf'")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS company_holidays (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               date TEXT NOT NULL,
               title TEXT NOT NULL,
+              kind TEXT NOT NULL DEFAULT '회사휴일',
               created_by_enc TEXT NOT NULL DEFAULT '',
               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               UNIQUE(date, title)
             )
             """
         )
+        holiday_columns = [row["name"] for row in conn.execute("PRAGMA table_info(company_holidays)").fetchall()]
+        if "kind" not in holiday_columns:
+            conn.execute("ALTER TABLE company_holidays ADD COLUMN kind TEXT NOT NULL DEFAULT '회사휴일'")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS app_state (
@@ -463,7 +480,14 @@ def ensure_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_leave_requests_status ON leave_requests(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_leave_requests_start_date ON leave_requests(start_date DESC)")
         for department in DEFAULT_DEPARTMENTS:
-            conn.execute("INSERT OR IGNORE INTO departments (name) VALUES (?)", (department,))
+            conn.execute(
+                "INSERT OR IGNORE INTO departments (name, color) VALUES (?, ?)",
+                (department, DEFAULT_DEPARTMENT_COLORS.get(department, "#d9eadf")),
+            )
+            conn.execute(
+                "UPDATE departments SET color = ? WHERE name = ? AND (color = '' OR color IS NULL OR color = '#d9eadf')",
+                (DEFAULT_DEPARTMENT_COLORS.get(department, "#d9eadf"), department),
+            )
 
         for mode in ("private",):
             count = conn.execute("SELECT COUNT(*) AS count FROM project_records WHERE mode = ?", (mode,)).fetchone()["count"]
@@ -512,10 +536,10 @@ def get_users(conn):
 def get_departments(conn):
     rows = conn.execute(
         """
-        SELECT d.id, d.name, d.created_at, COUNT(u.id_lookup) AS user_count
+        SELECT d.id, d.name, d.color, d.created_at, COUNT(u.id_lookup) AS user_count
         FROM departments d
         LEFT JOIN users_secure u ON u.department = d.name
-        GROUP BY d.id, d.name, d.created_at
+        GROUP BY d.id, d.name, d.color, d.created_at
         ORDER BY d.id
         """
     ).fetchall()
@@ -523,6 +547,7 @@ def get_departments(conn):
         {
             "id": row["id"],
             "name": row["name"],
+            "color": row["color"] or "#d9eadf",
             "createdAt": row["created_at"],
             "userCount": row["user_count"],
         }
@@ -530,15 +555,26 @@ def get_departments(conn):
     ]
 
 
-def create_department(conn, name):
+def normalize_department_color(value):
+    color = str(value or "").strip()
+    if not color:
+        return "#d9eadf"
+    if not re.match(r"^#[0-9a-fA-F]{6}$", color):
+        raise ValueError("Invalid department color.")
+    return color.lower()
+
+
+def create_department(conn, name, color="#d9eadf"):
     department = str(name or "").strip()[:40]
+    department_color = normalize_department_color(color)
     if not department:
         raise ValueError("Department name is required.")
-    conn.execute("INSERT OR IGNORE INTO departments (name) VALUES (?)", (department,))
+    conn.execute("INSERT OR IGNORE INTO departments (name, color) VALUES (?, ?)", (department, department_color))
 
 
-def update_department(conn, department_id, name):
+def update_department(conn, department_id, name, color="#d9eadf"):
     department = str(name or "").strip()[:40]
+    department_color = normalize_department_color(color)
     if not department:
         raise ValueError("Department name is required.")
     row = conn.execute("SELECT id, name FROM departments WHERE id = ?", (int(department_id),)).fetchone()
@@ -547,7 +583,7 @@ def update_department(conn, department_id, name):
     if conn.execute("SELECT 1 FROM departments WHERE name = ? AND id != ?", (department, int(department_id))).fetchone():
         raise ValueError("Department name already exists.")
     old_name = row["name"]
-    conn.execute("UPDATE departments SET name = ? WHERE id = ?", (department, int(department_id)))
+    conn.execute("UPDATE departments SET name = ?, color = ? WHERE id = ?", (department, department_color, int(department_id)))
     conn.execute("UPDATE users_secure SET department = ? WHERE department = ?", (department, old_name))
 
 
@@ -576,23 +612,68 @@ def company_holidays(conn, year=None):
         where = "WHERE substr(date, 1, 4) = ?"
         params.append(str(year))
     rows = conn.execute(
-        f"SELECT id, date, title, created_at FROM company_holidays {where} ORDER BY date DESC, id DESC",
+        f"SELECT id, date, title, kind, created_at FROM company_holidays {where} ORDER BY date DESC, id DESC",
         params,
     ).fetchall()
     return [dict(row) for row in rows]
 
 
+def normalize_holiday_kind(value):
+    kind = str(value or "회사휴일").strip()
+    allowed = {"회사휴일", "대체공휴일", "국가공휴일"}
+    if kind not in allowed:
+        raise ValueError("Invalid holiday kind.")
+    return kind
+
+
 def create_company_holiday(conn, payload, user):
     holiday_date = str(payload.get("date") or "").strip()
     title = str(payload.get("title") or "").strip()[:80]
+    kind = normalize_holiday_kind(payload.get("kind"))
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", holiday_date):
         raise ValueError("Invalid holiday date.")
     if not title:
         raise ValueError("Holiday title is required.")
     conn.execute(
-        "INSERT OR IGNORE INTO company_holidays (date, title, created_by_enc) VALUES (?, ?, ?)",
-        (holiday_date, title, encrypt_text(user.get("id", ""))),
+        "INSERT OR IGNORE INTO company_holidays (date, title, kind, created_by_enc) VALUES (?, ?, ?, ?)",
+        (holiday_date, title, kind, encrypt_text(user.get("id", ""))),
     )
+
+
+def update_company_holiday(conn, holiday_id, payload):
+    holiday_date = str(payload.get("date") or "").strip()
+    title = str(payload.get("title") or "").strip()[:80]
+    kind = normalize_holiday_kind(payload.get("kind"))
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", holiday_date):
+        raise ValueError("Invalid holiday date.")
+    if not title:
+        raise ValueError("Holiday title is required.")
+    try:
+        target_id = int(holiday_id)
+    except (TypeError, ValueError):
+        raise ValueError("Invalid holiday id.")
+    duplicate = conn.execute(
+        "SELECT id FROM company_holidays WHERE date = ? AND title = ? AND id != ?",
+        (holiday_date, title, target_id),
+    ).fetchone()
+    if duplicate:
+        raise ValueError("Holiday already exists.")
+    cursor = conn.execute(
+        "UPDATE company_holidays SET date = ?, title = ?, kind = ? WHERE id = ?",
+        (holiday_date, title, kind, target_id),
+    )
+    if cursor.rowcount == 0:
+        raise ValueError("Holiday not found.")
+
+
+def delete_company_holiday(conn, holiday_id):
+    try:
+        target_id = int(holiday_id)
+    except (TypeError, ValueError):
+        raise ValueError("Invalid holiday id.")
+    cursor = conn.execute("DELETE FROM company_holidays WHERE id = ?", (target_id,))
+    if cursor.rowcount == 0:
+        raise ValueError("Holiday not found.")
 
 
 def log_login_attempt(conn, user_id, name, role, result, failure_reason, ip):
@@ -1420,6 +1501,14 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     return self.write_json({"ok": True})
                 if parsed.path == "/api/login-user":
                     return self.write_json({"ok": True})
+                if parsed.path.startswith("/api/company-holidays/"):
+                    user = current_user(self)
+                    if not is_admin(user):
+                        return self.write_error_json("Admin login required.", HTTPStatus.UNAUTHORIZED)
+                    holiday_id = unquote(parsed.path.split("/api/company-holidays/", 1)[1])
+                    update_company_holiday(conn, holiday_id, payload)
+                    conn.commit()
+                    return self.write_json({"ok": True, "holidays": company_holidays(conn)})
                 if parsed.path.startswith("/api/leaves/"):
                     user = current_user(self)
                     if not is_admin(user):
@@ -1441,7 +1530,7 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     if not is_admin(user):
                         return self.write_error_json("Admin login required.", HTTPStatus.UNAUTHORIZED)
                     department_id = unquote(parsed.path.split("/api/departments/", 1)[1])
-                    update_department(conn, department_id, payload.get("name"))
+                    update_department(conn, department_id, payload.get("name"), payload.get("color"))
                     conn.commit()
                     return self.write_json({"ok": True, "departments": get_departments(conn), "users": get_users(conn)})
             return self.write_error_json("Unknown API endpoint.", HTTPStatus.NOT_FOUND)
@@ -1466,7 +1555,7 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     user = current_user(self)
                     if not is_admin(user):
                         return self.write_error_json("Admin login required.", HTTPStatus.UNAUTHORIZED)
-                    create_department(conn, payload.get("name"))
+                    create_department(conn, payload.get("name"), payload.get("color"))
                     conn.commit()
                     return self.write_json({"ok": True, "departments": get_departments(conn)})
                 if parsed.path == "/api/company-holidays":
@@ -1509,6 +1598,14 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/login-user":
                     clear_session_token(auth_token_from_handler(self))
                     return self.write_json({"ok": True})
+                if parsed.path.startswith("/api/company-holidays/"):
+                    user = current_user(self)
+                    if not is_admin(user):
+                        return self.write_error_json("Admin login required.", HTTPStatus.UNAUTHORIZED)
+                    holiday_id = unquote(parsed.path.split("/api/company-holidays/", 1)[1])
+                    delete_company_holiday(conn, holiday_id)
+                    conn.commit()
+                    return self.write_json({"ok": True, "holidays": company_holidays(conn)})
                 if parsed.path.startswith("/api/departments/"):
                     user = current_user(self)
                     if not is_admin(user):

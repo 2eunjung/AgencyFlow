@@ -20,14 +20,6 @@
               </div>
             </div>
 
-            <div class="admin-only hidden" id="companyHolidayForm">
-              <div class="filters schedule-filters">
-                <input id="companyHolidayDate" type="date" />
-                <input id="companyHolidayTitle" type="text" placeholder="회사 휴일명" autocomplete="off" />
-                <button class="ghost-btn" id="companyHolidayAddBtn" type="button">회사 휴일 추가</button>
-              </div>
-            </div>
-
             <div class="schedule-calendar-wrap" id="vacationCalendarPanel">
               <div class="schedule-calendar-head">
                 <div class="schedule-calendar-nav">
@@ -35,6 +27,7 @@
                   <strong class="schedule-month-label" id="vacationMonthLabel">2026년 7월</strong>
                   <button class="ghost-btn schedule-nav-btn" id="vacationNextMonth" type="button" aria-label="다음 달">›</button>
                 </div>
+                <button class="schedule-add-btn admin-only hidden" id="companyHolidayAddBtn" type="button">+ 휴일 추가</button>
               </div>
               <div class="schedule-calendar-grid" id="vacationCalendarGrid" aria-label="휴가 일정 캘린더"></div>
             </div>
@@ -54,6 +47,7 @@
                     <button class="ghost-btn schedule-nav-btn" id="vacationListNext" type="button" aria-label="다음 기간">›</button>
                   </div>
                 </div>
+                <button class="schedule-add-btn admin-only hidden" id="companyHolidayAddBtnList" type="button">+ 휴일 추가</button>
               </div>
               <div class="table-wrap schedule-table-wrap">
                 <table class="schedule-list-table management-table">
@@ -63,7 +57,6 @@
                       <th>부서</th>
                       <th>이름</th>
                       <th>구분</th>
-                      <th>상태</th>
                     </tr>
                   </thead>
                   <tbody id="vacationScheduleRows"></tbody>

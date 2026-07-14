@@ -527,6 +527,16 @@ h3 {
   max-width: 360px;
 }
 
+.department-color-input {
+  width: 44px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
 .staff-filter {
   width: 100%;
   min-width: 0;
@@ -2720,16 +2730,6 @@ body.detail-open .issue-projects-table tbody tr.selected {
 
 #vacationScheduleView .schedule-filters #vacationSearchInput {
   width: min(100%, 360px);
-}
-
-#companyHolidayForm {
-  padding: 12px 0 0;
-}
-
-#companyHolidayForm .schedule-filters {
-  justify-content: flex-start;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
 .schedule-calendar-head,

@@ -187,6 +187,37 @@
       </form>
     </dialog>
 
+    <dialog id="companyHolidayDialog" class="login-dialog">
+      <form id="companyHolidayForm" class="login-card">
+        <div class="panel-head">
+          <div>
+            <h2 id="companyHolidayDialogTitle">휴일 추가</h2>
+          </div>
+          <button id="closeCompanyHolidayDialog" class="icon-btn" aria-label="닫기" type="button">&times;</button>
+        </div>
+        <div class="login-body">
+          <label>휴일 일자
+            <input id="companyHolidayDialogDate" type="date" required />
+          </label>
+          <label>휴일 구분
+            <select id="companyHolidayDialogKind" class="member-dialog-select">
+              <option value="회사휴일">회사휴일</option>
+              <option value="대체공휴일">대체공휴일</option>
+              <option value="국가공휴일">국가공휴일</option>
+            </select>
+          </label>
+          <label>휴일명
+            <input id="companyHolidayDialogName" type="text" autocomplete="off" maxlength="80" placeholder="휴일명" required />
+          </label>
+          <div class="schedule-dialog-actions">
+            <button id="companyHolidayDeleteBtn" class="ghost-btn danger hidden" type="button">삭제</button>
+            <button class="primary-btn" type="submit">저장</button>
+          </div>
+          <p id="companyHolidayDialogMessage"></p>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="downloadDialog" class="login-dialog">
       <form id="downloadForm" class="login-card">
         <div class="panel-head">
