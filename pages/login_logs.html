@@ -1,0 +1,45 @@
+      <section id="loginLogsView" class="view">
+        <div class="list-panel management-panel">
+          <div class="panel-head">
+            <div>
+              <h1>로그인 로그</h1>
+            </div>
+          </div>
+          <div class="table-wrap management-table-wrap">
+            <table class="management-table login-log-table">
+              <thead>
+                <tr>
+                  <th>회원 아이디</th>
+                  <th>이름</th>
+                  <th>권한</th>
+                  <th>로그인 결과</th>
+                  <th>실패 사유</th>
+                  <th>접속 IP</th>
+                  <th>접속일시</th>
+                </tr>
+              </thead>
+              <tbody id="loginLogRows">
+                <tr>
+                  <td>admin</td>
+                  <td>관리자</td>
+                  <td><span class="role-badge admin">관리자</span></td>
+                  <td><span class="status-badge approved">성공</span></td>
+                  <td>-</td>
+                  <td>127.0.0.1</td>
+                  <td>2026-07-05 09:12:34</td>
+                </tr>
+                <tr>
+                  <td>user01</td>
+                  <td>홍길동</td>
+                  <td><span class="role-badge user">일반</span></td>
+                  <td><span class="status-badge rejected">실패</span></td>
+                  <td>비밀번호 불일치</td>
+                  <td>192.168.0.12</td>
+                  <td>2026-07-05 08:45:01</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+

@@ -1,0 +1,40 @@
+      <section id="leaveManagementView" class="view">
+        <section class="summary-grid members-summary" aria-label="연차 관리 요약">
+          <article class="summary-card">
+            <span>총 연차</span>
+            <strong id="leaveTotalDays">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>사용 연차</span>
+            <strong id="leaveUsedDays">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>잔여 연차</span>
+            <strong id="leaveRemainingDays">0</strong>
+          </article>
+        </section>
+
+        <div class="list-panel management-panel">
+          <div class="panel-head">
+            <div>
+              <h1>연차 관리</h1>
+            </div>
+            <button id="addLeaveRequestBtn" class="primary-btn" type="button">+ 연차 등록</button>
+          </div>
+          <div class="table-wrap management-table-wrap">
+            <table class="management-table">
+              <thead>
+                <tr>
+                  <th>사용일</th>
+                  <th>구분</th>
+                  <th>차감</th>
+                  <th>사유</th>
+                  <th>상태</th>
+                  <th>신청일</th>
+                </tr>
+              </thead>
+              <tbody id="leaveRequestRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>

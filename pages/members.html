@@ -1,0 +1,48 @@
+      <section id="membersView" class="view">
+        <section class="summary-grid members-summary" aria-label="회원 관리 요약">
+          <article class="summary-card">
+            <span>전체 회원</span>
+            <strong id="memberCount">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>비활성화</span>
+            <strong id="pendingMemberCount">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>사용자</span>
+            <strong id="regularMemberCount">0</strong>
+          </article>
+        </section>
+
+        <div class="list-panel management-panel">
+          <div class="panel-head">
+            <div>
+              <h1>회원 관리</h1>
+            </div>
+            <button id="addMemberBtn" class="primary-btn" type="button">+ 회원 추가</button>
+          </div>
+          <div class="filters member-filters">
+            <select id="memberDepartmentFilter">
+              <option value="">전체 부서</option>
+            </select>
+            <input id="memberSearchInput" type="search" placeholder="아이디, 이름 검색" autocomplete="off" />
+          </div>
+          <div class="table-wrap management-table-wrap">
+            <table class="management-table">
+              <thead>
+                <tr>
+                  <th>아이디</th>
+                  <th>이름</th>
+                  <th>부서</th>
+                  <th>총 연차</th>
+                  <th>잔여 연차</th>
+                  <th>권한</th>
+                  <th>계정 상태</th>
+                </tr>
+              </thead>
+              <tbody id="memberRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+

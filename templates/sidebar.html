@@ -1,0 +1,23 @@
+    <aside class="sidebar">
+      <nav>
+        <button class="nav-item active" data-view="dashboard" type="button">대시보드</button>
+        <button class="nav-item nav-parent" data-view="projects" type="button">프로젝트 관리</button>
+        <button class="nav-item sub" data-view="projects" type="button">프로젝트 목록</button>
+        <button class="nav-item sub" data-view="monthly" type="button">당월수금 프로젝트</button>
+        <button class="nav-item sub" data-view="issues" type="button">이슈 프로젝트</button>
+        <button class="nav-item nav-parent" data-view="schedule" type="button">캘린더</button>
+        <button class="nav-item sub" data-view="schedule" type="button">프로젝트 일정</button>
+        <button class="nav-item sub" data-view="vacationSchedule" type="button">휴가 일정</button>
+        <button class="nav-item nav-parent hidden" data-view="leaveManagement" data-auth-menu="attendance" type="button">근태 관리</button>
+        <button class="nav-item sub hidden" data-view="leaveManagement" data-auth-menu="leave" type="button">연차 관리</button>
+        <button class="nav-item sub admin-only hidden" data-view="leaveApprovals" data-auth-menu="attendance" type="button">연차 승인 목록</button>
+        <button class="nav-item nav-parent hidden" data-view="members" data-auth-menu="basic" type="button">기본 관리</button>
+        <button class="nav-item sub admin-only hidden" data-view="departments" data-auth-menu="basic" type="button">부서 관리</button>
+        <button class="nav-item sub admin-only hidden" data-view="members" data-auth-menu="basic" type="button">회원 관리</button>
+        <button class="nav-item sub admin-only hidden" data-view="loginLogs" data-auth-menu="basic" type="button">로그인 로그</button>
+        <button class="nav-item sub admin-only hidden" data-view="projectLogs" data-auth-menu="basic" type="button">프로젝트 로그</button>
+      </nav>
+      <button id="sidebarRail" class="sidebar-rail" type="button" aria-label="메뉴 접기" title="메뉴 접기">
+        <span class="sidebar-rail-icon" aria-hidden="true">‹</span>
+      </button>
+    </aside>

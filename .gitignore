@@ -1,0 +1,21 @@
+# Local database and encryption secret
+*.sqlite3
+*.db
+projects.secret
+
+# Backups and generated archives
+db_backups/
+backup/
+*.zip
+
+# Python cache/runtime artifacts
+__pycache__/
+*.py[cod]
+
+# Local-only helper scripts used for DB cleanup
+wipe_all_db_data.py
+wipe_keep_admin.py
+
+# Local environment files
+.env
+*.env

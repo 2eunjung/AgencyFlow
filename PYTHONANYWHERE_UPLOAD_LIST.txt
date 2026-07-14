@@ -1,0 +1,21 @@
+UPLOAD REQUIRED
+wsgi.py
+sqlite_server.py
+requirements.txt
+templates/
+pages/
+static/
+projects.sqlite3
+projects.secret
+
+OPTIONAL / BACKUP ONLY
+backup/
+agencyflow.html
+project.css
+project.js
+PYTHONANYWHERE_DEPLOY.md
+pythonanywhere_wsgi_example.py
+
+DO NOT UPLOAD
+__pycache__/
+templates.zip

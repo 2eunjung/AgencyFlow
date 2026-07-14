@@ -1,0 +1,65 @@
+      <section id="dashboardView" class="view active">
+        <section class="summary-grid" aria-label="프로젝트 요약">
+          <article class="summary-card">
+            <span>전체 프로젝트</span>
+            <strong id="activeCount">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>진행 프로젝트</span>
+            <strong id="feedbackCount">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>당월수금</span>
+            <strong id="monthlyCount">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>이슈 프로젝트</span>
+            <strong id="issueCount">0</strong>
+          </article>
+        </section>
+
+        <section class="dashboard-schedule-grid" aria-label="프로젝트 일정 확인">
+          <article class="chart-panel dashboard-schedule-panel">
+            <div class="panel-head">
+              <div>
+                <h2>오늘 확인 일정</h2>
+                <p id="dashboardTodayScheduleDate">-</p>
+              </div>
+              <strong id="dashboardTodayScheduleCount" class="dashboard-schedule-count">0</strong>
+            </div>
+            <div id="dashboardTodaySchedules" class="dashboard-schedule-list"></div>
+          </article>
+
+          <article class="chart-panel dashboard-schedule-panel">
+            <div class="panel-head">
+              <div>
+                <h2>이번 주 확인 일정</h2>
+                <p id="dashboardWeekScheduleRange">-</p>
+              </div>
+              <strong id="dashboardWeekScheduleCount" class="dashboard-schedule-count">0</strong>
+            </div>
+            <div id="dashboardWeekSchedules" class="dashboard-schedule-list"></div>
+          </article>
+        </section>
+
+        <section class="dashboard-grid">
+          <article class="chart-panel">
+            <div class="panel-head">
+              <div>
+                <h1>통합 데이터</h1>
+              </div>
+            </div>
+            <div id="statusChart" class="bar-chart" aria-label="진행 프로젝트 PM별 마일스톤 그래프"></div>
+          </article>
+
+          <article class="chart-panel narrow">
+            <div class="panel-head">
+              <div>
+                <h2>마일스톤 현황</h2>
+              </div>
+            </div>
+            <div id="statusSummary" class="status-list"></div>
+          </article>
+        </section>
+      </section>
+

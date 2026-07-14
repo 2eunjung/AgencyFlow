@@ -1,0 +1,49 @@
+      <section id="monthlyView" class="view">
+        <section class="summary-grid" aria-label="당월수금 요약">
+          <article class="summary-card">
+            <span>당월수금 프로젝트</span>
+            <strong id="monthlyProjectCount">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>수금 완료</span>
+            <strong id="monthlyCompletedCount">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>총 금액</span>
+            <strong id="monthlyTotalAmount">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>수금한 금액</span>
+            <strong id="monthlyCollectedAmount">0</strong>
+          </article>
+        </section>
+
+        <div class="list-panel">
+          <div class="panel-head">
+            <div>
+              <h1>당월수금 프로젝트</h1>
+            </div>
+            <button class="primary-btn" data-view-shortcut="projects" type="button">프로젝트 목록으로 이동</button>
+          </div>
+          <div class="table-wrap monthly-table">
+            <table class="monthly-projects-table">
+              <thead>
+                <tr>
+                  <th class="table-sort-trigger" data-sort-list="monthly" data-sort-key="projectNo" scope="col">PJ No <span data-sort-icon="monthly:projectNo" aria-hidden="true">↕</span></th>
+                  <th>프로젝트명</th>
+                  <th class="table-sort-trigger" data-sort-list="monthly" data-sort-key="milestone" scope="col">마일스톤 <span data-sort-icon="monthly:milestone" aria-hidden="true">↕</span></th>
+                  <th>진행상태</th>
+                  <th>잔금</th>
+                  <th>입금일자</th>
+                  <th>수금 완료</th>
+                  <th>바로가기</th>
+                </tr>
+              </thead>
+              <tbody id="monthlyRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+
+
