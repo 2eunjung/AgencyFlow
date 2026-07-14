@@ -1,28 +1,8 @@
       <section id="issuesView" class="view">
-        <section class="summary-grid" aria-label="이슈 프로젝트 요약">
-          <article class="summary-card">
-            <span>이슈 프로젝트</span>
-            <strong id="issueProjectTotal">0</strong>
-          </article>
-          <article class="summary-card">
-            <span>진행중</span>
-            <strong id="issueProgressCount">0</strong>
-          </article>
-          <article class="summary-card">
-            <span>고객 확인</span>
-            <strong id="issueReviewCount">0</strong>
-          </article>
-          <article class="summary-card">
-            <span>담당 PM</span>
-            <strong id="issuePmCount">0</strong>
-          </article>
-        </section>
-
         <div class="list-panel issue-project-panel">
           <div class="panel-head">
             <div>
-              <h1>이슈 프로젝트</h1>
-              <p>이슈 체크가 된 프로젝트를 모아 확인합니다.</p>
+              <h1 id="issueProjectsTitle">이슈 프로젝트(0건)</h1>
             </div>
             <button class="primary-btn" data-view-shortcut="projects" type="button">프로젝트 목록으로 이동</button>
           </div>
@@ -30,9 +10,9 @@
             <table class="issue-projects-table">
               <thead>
                 <tr>
-                  <th class="table-sort-trigger" data-sort-list="issues" data-sort-key="projectNo" scope="col">PJ No <span data-sort-icon="issues:projectNo" aria-hidden="true">↕</span></th>
+                  <th class="table-sort-trigger" data-sort-list="issues" data-sort-key="projectNo" scope="col">PJ No <span data-sort-icon="issues:projectNo" aria-hidden="true">&#8597;</span></th>
                   <th>프로젝트명</th>
-                  <th class="table-sort-trigger" data-sort-list="issues" data-sort-key="milestone" scope="col">마일스톤 <span data-sort-icon="issues:milestone" aria-hidden="true">↕</span></th>
+                  <th class="table-sort-trigger" data-sort-list="issues" data-sort-key="milestone" scope="col">마일스톤 <span data-sort-icon="issues:milestone" aria-hidden="true">&#8597;</span></th>
                   <th>작업상태</th>
                   <th>PM</th>
                   <th>최근 이슈</th>
@@ -44,4 +24,3 @@
           </div>
         </div>
       </section>
-

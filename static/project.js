@@ -668,10 +668,7 @@ function normalizeProject(project) {
     issues: (project.issues || []).map(normalizeIssue),
     clientContacts,
     communications,
-    schedules: (project.schedules || []).map((entry) => ({
-      ...entry,
-      completed: Boolean(entry.completed),
-    })),
+    schedules: (project.schedules || []).map((entry) => normalizeScheduleEntry(project, entry)),
     monthlyCollection: Boolean(project.monthlyCollection),
     hasLanding: Boolean(project.hasLanding),
     hasIssue: Boolean(project.hasIssue),
@@ -679,6 +676,17 @@ function normalizeProject(project) {
     shortcutUrl: project.shortcutUrl || "",
     intranetUrl: project.intranetUrl || "",
     designUrl: project.designUrl || "",
+  };
+}
+
+function normalizeScheduleEntry(project, entry) {
+  const fallbackStaff = scheduleStaffForMilestone(project, entry?.milestone || projectMilestone(project));
+  const legacyStaffName = String(entry?.staff || "").trim();
+  return {
+    ...entry,
+    staffRole: entry?.staffRole || fallbackStaff.staffRole,
+    staffName: entry?.staffName || legacyStaffName || fallbackStaff.staffName,
+    completed: Boolean(entry?.completed),
   };
 }
 
@@ -1077,7 +1085,7 @@ function isReadOnlyMode() {
 
 function requireWritableAction() {
   if (!isReadOnlyMode()) return true;
-  alert("비로그인 상태에서는 샘플 데이터를 읽기 전용으로만 볼 수 있습니다. 수정하려면 로그인해 주세요.");
+  alert("비로그인 상태에서는 읽기 전용으로만 볼 수 있습니다. 수정하려면 로그인해 주세요.");
   return false;
 }
 
@@ -1325,6 +1333,42 @@ function buildProjectSearchHaystack(project) {
     .filter((value) => value != null && String(value).trim() !== "")
     .join(" ")
     .toLowerCase();
+}
+
+function digitsOnly(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function matchedClientContacts(project) {
+  const query = valueOf("searchInput").trim();
+  const queryDigits = digitsOnly(query);
+  if (!queryDigits) return [];
+
+  return (project.clientContacts || [])
+    .map((contact) => {
+      const phones = [contact.companyPhone, contact.personalPhone]
+        .map((phone) => String(phone || "").trim())
+        .filter(Boolean);
+      const matchedPhones = phones.filter((phone) => digitsOnly(phone).includes(queryDigits));
+      return matchedPhones.length
+        ? {
+            name: contact.name || "담당자",
+            phones: matchedPhones,
+          }
+        : null;
+    })
+    .filter(Boolean);
+}
+
+function renderMatchedClientContacts(project) {
+  const matches = matchedClientContacts(project);
+  if (!matches.length) return "";
+  return `<div class="project-contact-preview">${matches
+    .map(
+      (contact) =>
+        `<div class="project-contact-line-matched">${escapeHtml(contact.name)} · ${escapeHtml(contact.phones.join(" / "))}</div>`
+    )
+    .join("")}</div>`;
 }
 
 function getSelectedMilestoneFilters() {
@@ -2023,14 +2067,23 @@ function renderRows() {
     .map((project) => {
       const displayStatus = project.status || project.progressStatus || "미지정";
       const milestone = project.milestone || "-";
+      const contactPreview = renderMatchedClientContacts(project);
       return `
-        <tr data-id="${project.id}" class="${project.id === selectedId && document.body.classList.contains("detail-open") ? "selected" : ""}">
+        <tr data-id="${project.id}" class="${[
+          project.id === selectedId && document.body.classList.contains("detail-open") ? "selected" : "",
+          contactPreview ? "has-contact-preview" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}">
           <td>${escapeHtml(project.projectNo)}</td>
-          <td>
-            <div class="project-title-cell">
-              ${buildDueDateBadge(project)}
-              <span class="project-name">${escapeHtml(project.name || "이름 없음")}</span>
-              ${buildProjectFlagIcons(project)}
+          <td class="project-name-cell">
+            <div class="project-name-stack">
+              <div class="project-title-cell">
+                ${buildDueDateBadge(project)}
+                <span class="project-name">${escapeHtml(project.name || "이름 없음")}</span>
+                ${buildProjectFlagIcons(project)}
+              </div>
+              ${contactPreview}
             </div>
           </td>
           <td>${escapeHtml(milestone)}</td>
@@ -3159,10 +3212,24 @@ function downloadProjectsExcel() {
 function openLogin() {
   setText("loginMessage", "");
   if (!currentUser) {
-    setValue("loginId", "demo");
-    setValue("loginPassword", "demo");
+    setValue("loginId", "");
+    setValue("loginPassword", "");
   }
-  $("loginDialog")?.showModal();
+  const dialog = $("loginDialog");
+  if (dialog && !dialog.open) dialog.showModal();
+}
+
+function applyLoginGate() {
+  const locked = !currentUser;
+  document.body.classList.toggle("auth-locked", locked);
+  $("closeLogin")?.classList.toggle("hidden", locked);
+  const dialog = $("loginDialog");
+  if (locked) {
+    setText("loginMessage", "");
+    if (dialog && !dialog.open) dialog.showModal();
+    return;
+  }
+  if (dialog?.open) dialog.close();
 }
 
 const PASSWORD_POLICY_MESSAGE = "비밀번호는 알파벳, 숫자, 특수문자를 포함해 8자 이상이어야 합니다.";
@@ -3278,7 +3345,6 @@ async function submitLogin(event) {
     setValue("loginId", "");
     setValue("loginPassword", "");
     setText("loginMessage", "");
-    $("loginDialog")?.close();
     await applyDatasetMode("private");
     if (isAdmin()) void refreshDepartments();
   } catch (error) {
@@ -3311,6 +3377,7 @@ function updateAuthUi() {
   setText("authStatus", loggedIn ? (isAdmin() ? "관리자 로그인" : `${displayName} 로그인`) : "로그인 전");
   $("loginButton")?.classList.toggle("hidden", loggedIn);
   $("logoutButton")?.classList.toggle("hidden", !loggedIn);
+  applyLoginGate();
   updateNavAccess();
   applyReadOnlyUi();
 }
@@ -4048,6 +4115,7 @@ function renderIssueProjectSummary(rows = issueProjects()) {
   const progress = rows.filter((project) => !isInactiveProgressMilestone(projectMilestone(project)));
   const review = rows.filter((project) => ["고객검수중", "내용증명", "법정다툼", "작업중단-고객요청"].includes(projectMilestone(project)));
   const pmCount = new Set(rows.map((project) => String(project.pm || "").trim()).filter(Boolean)).size;
+  setText("issueProjectsTitle", `이슈 프로젝트(${rows.length.toLocaleString("ko-KR")}건)`);
   setText("issueProjectTotal", rows.length.toLocaleString("ko-KR"));
   setText("issueProgressCount", progress.length.toLocaleString("ko-KR"));
   setText("issueReviewCount", review.length.toLocaleString("ko-KR"));
@@ -4107,12 +4175,15 @@ function renderIssueProjectRows() {
 
 function allScheduleEntries() {
   return projects.flatMap((project) =>
-    (project.schedules || []).map((entry) => ({
-      ...entry,
-      projectId: project.id,
-      projectNo: entry.projectNo || project.projectNo || "",
-      projectName: entry.projectName || project.name || "",
-    }))
+    (project.schedules || []).map((entry) => {
+      const normalized = normalizeScheduleEntry(project, entry);
+      return {
+        ...normalized,
+        projectId: project.id,
+        projectNo: normalized.projectNo || project.projectNo || "",
+        projectName: normalized.projectName || project.name || "",
+      };
+    })
   );
 }
 
@@ -4131,7 +4202,7 @@ function scheduleStaffForProject(project) {
 }
 
 function scheduleStaffBadgeText(entry) {
-  return [entry.staffRole, entry.staffName].filter(Boolean).join(" · ") || "-";
+  return entry.staffName || "-";
 }
 
 const DEMO_SCHEDULE_DETAILS = [
@@ -4206,9 +4277,17 @@ function getDemoScheduleEntriesForRange(start, end) {
 }
 
 function scheduleEntriesWithDemo(options = {}) {
-  const real = filteredScheduleEntries();
-  if (!isReadOnlyMode()) return real;
   const { year, month, start, end } = options;
+  const real = filteredScheduleEntries().filter((entry) => {
+    const date = String(entry.date || "");
+    if (start && end) return date >= start && date <= end;
+    if (year && month) {
+      const parts = parseDateParts(date);
+      return parts && parts.year === year && parts.month === month;
+    }
+    return true;
+  });
+  if (!isReadOnlyMode()) return real;
   let demo = [];
   if (year && month) demo = getDemoScheduleEntries(year, month);
   else if (start && end) demo = getDemoScheduleEntriesForRange(start, end);
@@ -4913,7 +4992,13 @@ on("closeShortcut", "click", () => $("shortcutDialog")?.close());
 on("loginButton", "click", openLogin);
 on("logoutButton", "click", logout);
 on("loginForm", "submit", submitLogin);
-on("closeLogin", "click", () => $("loginDialog")?.close());
+on("closeLogin", "click", () => {
+  if (!currentUser) return;
+  $("loginDialog")?.close();
+});
+$("loginDialog")?.addEventListener("cancel", (event) => {
+  if (!currentUser) event.preventDefault();
+});
 on("addMemberBtn", "click", () => openMemberDialog());
 on("memberForm", "submit", submitMemberForm);
 on("closeMemberDialog", "click", closeMemberDialog);

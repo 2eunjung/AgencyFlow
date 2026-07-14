@@ -1,4 +1,4 @@
-import base64
+﻿import base64
 import hashlib
 import hmac
 import secrets
@@ -42,7 +42,7 @@ PDF_DANGEROUS_MARKERS = (
     b"/XFA",
 )
 
-SAMPLE_PROJECTS = [{'id': 'sample-001', 'no': 1, 'projectNo': 'S-1001', 'name': '샘플 기업 홈페이지 구축', 'industry': '제조', 'contractDate': '2026-01-06', 'dueDate': '2026-02-11', 'openDate': '', 'contractAmount': 3200, 'balance': 800, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '자료요청중', 'adminMilestone': '자료요청중', 'status': '진행중', 'progressStatus': '진행중', 'pm': '샘플PM', 'designer': '디자이너A', 'publisher': '퍼블리셔A', 'programmer': '개발자A', 'hostingType': '일반 호스팅', 'hasLanding': False, 'hasForeignLanguage': False, 'monthlyCollection': True, 'hasIssue': True, 'issues': [{'id': 'sample-issue-001', 'memo': '샘플 확인 사항입니다.', 'createdAt': '2026-01-08T09:00:00'}], 'clientContacts': [{'id': 'sample-contact-001', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-001', 'date': '2026-01-09', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-002', 'no': 2, 'projectNo': 'S-1002', 'name': '샘플 브랜드 랜딩페이지', 'industry': '서비스', 'contractDate': '2026-02-07', 'dueDate': '2026-03-12', 'openDate': '', 'contractAmount': 1200, 'balance': 1200, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '화면설계중', 'adminMilestone': '화면설계중', 'status': '피드백대기', 'progressStatus': '피드백대기', 'pm': '샘플PM', 'designer': '디자이너B', 'publisher': '퍼블리셔B', 'programmer': '', 'hostingType': '일반 호스팅', 'hasLanding': True, 'hasForeignLanguage': False, 'monthlyCollection': True, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-002', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-002', 'date': '2026-02-10', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-003', 'no': 3, 'projectNo': 'S-1003', 'name': '샘플 다국어 사이트 개편', 'industry': '교육', 'contractDate': '2026-03-08', 'dueDate': '2026-04-13', 'openDate': '', 'contractAmount': 5400, 'balance': 2700, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '메인시안중', 'adminMilestone': '메인시안중', 'status': '진행중', 'progressStatus': '진행중', 'pm': '샘플PM2', 'designer': '디자이너C', 'publisher': '퍼블리셔C', 'programmer': '개발자C', 'hostingType': '단독서버', 'hasLanding': False, 'hasForeignLanguage': True, 'monthlyCollection': True, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-003', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-003', 'date': '2026-03-11', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-004', 'no': 4, 'projectNo': 'S-1004', 'name': '샘플 쇼핑몰 리뉴얼', 'industry': '유통', 'contractDate': '2026-04-09', 'dueDate': '2026-05-14', 'openDate': '', 'contractAmount': 4100, 'balance': 1300, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '서브시안중', 'adminMilestone': '서브시안중', 'status': '고객지연', 'progressStatus': '고객지연', 'pm': '샘플PM2', 'designer': '디자이너D', 'publisher': '퍼블리셔A', 'programmer': '개발자B', 'hostingType': '일반 호스팅', 'hasLanding': False, 'hasForeignLanguage': False, 'monthlyCollection': True, 'hasIssue': True, 'issues': [{'id': 'sample-issue-004', 'memo': '샘플 확인 사항입니다.', 'createdAt': '2026-04-11T09:00:00'}], 'clientContacts': [{'id': 'sample-contact-004', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-004', 'date': '2026-04-12', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-005', 'no': 5, 'projectNo': 'S-1005', 'name': '샘플 병원 사이트 제작', 'industry': '의료', 'contractDate': '2026-05-10', 'dueDate': '2026-06-15', 'openDate': '', 'contractAmount': 2800, 'balance': 500, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '상세디자인', 'adminMilestone': '상세디자인', 'status': '진행중', 'progressStatus': '진행중', 'pm': '샘플PM2', 'designer': '디자이너E', 'publisher': '퍼블리셔B', 'programmer': '개발자C', 'hostingType': '일반 호스팅', 'hasLanding': False, 'hasForeignLanguage': False, 'monthlyCollection': True, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-005', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-005', 'date': '2026-05-13', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-006', 'no': 6, 'projectNo': 'S-1006', 'name': '샘플 채용 캠페인 페이지', 'industry': '인사', 'contractDate': '2026-01-11', 'dueDate': '2026-02-16', 'openDate': '', 'contractAmount': 900, 'balance': 900, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '퍼블리싱중', 'adminMilestone': '퍼블리싱중', 'status': '진행중', 'progressStatus': '진행중', 'pm': '샘플PM', 'designer': '디자이너F', 'publisher': '퍼블리셔C', 'programmer': '', 'hostingType': '일반 호스팅', 'hasLanding': True, 'hasForeignLanguage': False, 'monthlyCollection': False, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-006', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-006', 'date': '2026-01-14', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-007', 'no': 7, 'projectNo': 'S-1007', 'name': '샘플 예약 시스템 구축', 'industry': '서비스', 'contractDate': '2026-02-12', 'dueDate': '2026-03-17', 'openDate': '', 'contractAmount': 6200, 'balance': 3100, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '프로그램중', 'adminMilestone': '프로그램중', 'status': '진행중', 'progressStatus': '진행중', 'pm': '샘플PM2', 'designer': '디자이너A', 'publisher': '퍼블리셔D', 'programmer': '개발자D', 'hostingType': '단독서버', 'hasLanding': False, 'hasForeignLanguage': False, 'monthlyCollection': False, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-007', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-007', 'date': '2026-02-15', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-008', 'no': 8, 'projectNo': 'S-1008', 'name': '샘플 제품 소개 사이트', 'industry': '제조', 'contractDate': '2026-03-13', 'dueDate': '2026-04-18', 'openDate': '', 'contractAmount': 2300, 'balance': 0, 'depositDate': '2026-03-14', 'shortcutUrl': '', 'designUrl': '', 'milestone': '고객검수중', 'adminMilestone': '고객검수중', 'status': '피드백대기', 'progressStatus': '피드백대기', 'pm': '샘플PM2', 'designer': '디자이너B', 'publisher': '퍼블리셔A', 'programmer': '개발자A', 'hostingType': '일반 호스팅', 'hasLanding': False, 'hasForeignLanguage': False, 'monthlyCollection': False, 'hasIssue': True, 'issues': [{'id': 'sample-issue-008', 'memo': '샘플 확인 사항입니다.', 'createdAt': '2026-03-15T09:00:00'}], 'clientContacts': [{'id': 'sample-contact-008', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-008', 'date': '2026-03-16', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-009', 'no': 9, 'projectNo': 'S-1009', 'name': '샘플 학원 홈페이지', 'industry': '교육', 'contractDate': '2026-04-14', 'dueDate': '2026-05-19', 'openDate': '', 'contractAmount': 1800, 'balance': 0, 'depositDate': '2026-04-15', 'shortcutUrl': '', 'designUrl': '', 'milestone': '오픈안내함', 'adminMilestone': '오픈안내함', 'status': '오픈대기', 'progressStatus': '오픈대기', 'pm': '샘플PM', 'designer': '디자이너C', 'publisher': '퍼블리셔B', 'programmer': '개발자B', 'hostingType': '일반 호스팅', 'hasLanding': False, 'hasForeignLanguage': False, 'monthlyCollection': False, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-009', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-009', 'date': '2026-04-17', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-010', 'no': 10, 'projectNo': 'S-1010', 'name': '샘플 글로벌 홍보 사이트', 'industry': '무역', 'contractDate': '2026-05-15', 'dueDate': '2026-06-20', 'openDate': '', 'contractAmount': 3500, 'balance': 1700, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '외국어작업', 'adminMilestone': '외국어작업', 'status': '진행중', 'progressStatus': '진행중', 'pm': '샘플PM2', 'designer': '디자이너D', 'publisher': '퍼블리셔C', 'programmer': '개발자C', 'hostingType': '일반 호스팅', 'hasLanding': False, 'hasForeignLanguage': True, 'monthlyCollection': False, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-010', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-010', 'date': '2026-05-18', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-011', 'no': 11, 'projectNo': 'S-1011', 'name': '샘플 내부 포털', 'industry': 'IT', 'contractDate': '2026-01-16', 'dueDate': '2026-02-21', 'openDate': '', 'contractAmount': 4800, 'balance': 4800, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '작업중단-고객요청', 'adminMilestone': '작업중단-고객요청', 'status': '작업중단', 'progressStatus': '작업중단', 'pm': '샘플PM2', 'designer': '디자이너E', 'publisher': '퍼블리셔D', 'programmer': '개발자D', 'hostingType': '일반 호스팅', 'hasLanding': False, 'hasForeignLanguage': False, 'monthlyCollection': False, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-011', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-011', 'date': '2026-01-19', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-012', 'no': 12, 'projectNo': 'S-1012', 'name': '샘플 법무법인 사이트', 'industry': '법률', 'contractDate': '2026-02-17', 'dueDate': '2026-03-22', 'openDate': '', 'contractAmount': 2600, 'balance': 2600, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '내용증명', 'adminMilestone': '내용증명', 'status': '고객지연', 'progressStatus': '고객지연', 'pm': '샘플PM', 'designer': '디자이너F', 'publisher': '퍼블리셔A', 'programmer': '', 'hostingType': '일반 호스팅', 'hasLanding': False, 'hasForeignLanguage': False, 'monthlyCollection': False, 'hasIssue': True, 'issues': [{'id': 'sample-issue-012', 'memo': '샘플 확인 사항입니다.', 'createdAt': '2026-02-19T09:00:00'}], 'clientContacts': [{'id': 'sample-contact-012', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-012', 'date': '2026-02-20', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-013', 'no': 13, 'projectNo': 'S-1013', 'name': '샘플 계약 분쟁 프로젝트', 'industry': '기타', 'contractDate': '2026-03-18', 'dueDate': '2026-04-23', 'openDate': '', 'contractAmount': 3900, 'balance': 3900, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '법정다툼', 'adminMilestone': '법정다툼', 'status': '작업중단', 'progressStatus': '작업중단', 'pm': '샘플PM2', 'designer': '디자이너A', 'publisher': '퍼블리셔B', 'programmer': '개발자A', 'hostingType': '일반 호스팅', 'hasLanding': False, 'hasForeignLanguage': False, 'monthlyCollection': False, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-013', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-013', 'date': '2026-03-21', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-014', 'no': 14, 'projectNo': 'S-1014', 'name': '샘플 이벤트 페이지', 'industry': '마케팅', 'contractDate': '2026-04-19', 'dueDate': '2026-05-24', 'openDate': '2026-06-01', 'contractAmount': 700, 'balance': 0, 'depositDate': '2026-04-20', 'shortcutUrl': '', 'designUrl': '', 'milestone': '프로젝트종료', 'adminMilestone': '프로젝트종료', 'status': '완료', 'progressStatus': '완료', 'pm': '샘플PM', 'designer': '디자이너B', 'publisher': '퍼블리셔C', 'programmer': '', 'hostingType': '일반 호스팅', 'hasLanding': True, 'hasForeignLanguage': False, 'monthlyCollection': False, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-014', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-014', 'date': '2026-04-22', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-015', 'no': 15, 'projectNo': 'S-1015', 'name': '샘플 협회 홈페이지', 'industry': '공공', 'contractDate': '2026-05-20', 'dueDate': '2026-06-25', 'openDate': '2026-07-01', 'contractAmount': 3300, 'balance': 0, 'depositDate': '2026-05-21', 'shortcutUrl': '', 'designUrl': '', 'milestone': '프로젝트종료', 'adminMilestone': '프로젝트종료', 'status': '완료', 'progressStatus': '완료', 'pm': '샘플PM2', 'designer': '디자이너C', 'publisher': '퍼블리셔D', 'programmer': '개발자B', 'hostingType': '일반 호스팅', 'hasLanding': False, 'hasForeignLanguage': False, 'monthlyCollection': False, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-015', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-015', 'date': '2026-05-23', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-016', 'no': 16, 'projectNo': 'S-1016', 'name': '샘플 프랜차이즈 사이트', 'industry': '외식', 'contractDate': '2026-01-21', 'dueDate': '2026-02-26', 'openDate': '', 'contractAmount': 2900, 'balance': 2900, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '자료요청중', 'adminMilestone': '자료요청중', 'status': '입금대기', 'progressStatus': '입금대기', 'pm': '샘플PM2', 'designer': '디자이너D', 'publisher': '퍼블리셔A', 'programmer': '개발자C', 'hostingType': '일반 호스팅', 'hasLanding': False, 'hasForeignLanguage': False, 'monthlyCollection': False, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-016', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-016', 'date': '2026-01-24', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-017', 'no': 17, 'projectNo': 'S-1017', 'name': '샘플 SaaS 소개 페이지', 'industry': 'IT', 'contractDate': '2026-02-22', 'dueDate': '2026-03-27', 'openDate': '', 'contractAmount': 1600, 'balance': 800, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '화면설계중', 'adminMilestone': '화면설계중', 'status': '진행중', 'progressStatus': '진행중', 'pm': '샘플PM', 'designer': '디자이너E', 'publisher': '퍼블리셔B', 'programmer': '개발자D', 'hostingType': '일반 호스팅', 'hasLanding': True, 'hasForeignLanguage': False, 'monthlyCollection': False, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-017', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-017', 'date': '2026-02-25', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-018', 'no': 18, 'projectNo': 'S-1018', 'name': '샘플 금융 서비스 사이트', 'industry': '금융', 'contractDate': '2026-03-23', 'dueDate': '2026-04-28', 'openDate': '', 'contractAmount': 5100, 'balance': 2500, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '상세디자인', 'adminMilestone': '상세디자인', 'status': '피드백대기', 'progressStatus': '피드백대기', 'pm': '샘플PM2', 'designer': '디자이너F', 'publisher': '퍼블리셔C', 'programmer': '개발자A', 'hostingType': '일반 호스팅', 'hasLanding': False, 'hasForeignLanguage': False, 'monthlyCollection': False, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-018', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-018', 'date': '2026-03-26', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-019', 'no': 19, 'projectNo': 'S-1019', 'name': '샘플 문화재단 사이트', 'industry': '문화', 'contractDate': '2026-04-24', 'dueDate': '2026-05-28', 'openDate': '', 'contractAmount': 2400, 'balance': 1200, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '퍼블리싱중', 'adminMilestone': '퍼블리싱중', 'status': '진행중', 'progressStatus': '진행중', 'pm': '샘플PM2', 'designer': '디자이너A', 'publisher': '퍼블리셔D', 'programmer': '', 'hostingType': '일반 호스팅', 'hasLanding': False, 'hasForeignLanguage': False, 'monthlyCollection': False, 'hasIssue': False, 'issues': [], 'clientContacts': [{'id': 'sample-contact-019', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-019', 'date': '2026-04-27', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}, {'id': 'sample-020', 'no': 20, 'projectNo': 'S-1020', 'name': '샘플 물류 플랫폼', 'industry': '물류', 'contractDate': '2026-05-25', 'dueDate': '2026-06-28', 'openDate': '', 'contractAmount': 7600, 'balance': 5600, 'depositDate': '', 'shortcutUrl': '', 'designUrl': '', 'milestone': '프로그램중', 'adminMilestone': '프로그램중', 'status': '입금지연', 'progressStatus': '입금지연', 'pm': '샘플PM', 'designer': '디자이너B', 'publisher': '퍼블리셔A', 'programmer': '개발자B', 'hostingType': '단독서버', 'hasLanding': False, 'hasForeignLanguage': False, 'monthlyCollection': False, 'hasIssue': True, 'issues': [{'id': 'sample-issue-020', 'memo': '샘플 확인 사항입니다.', 'createdAt': '2026-05-27T09:00:00'}], 'clientContacts': [{'id': 'sample-contact-020', 'name': '샘플 담당자', 'department': '마케팅팀', 'phone': '010-0000-0000', 'email': 'sample@example.com', 'memo': ''}], 'communications': [{'id': 'sample-comm-020', 'date': '2026-05-28', 'memo': '샘플 커뮤니케이션 내역입니다.'}], 'quoteFileName': '', 'quoteFileData': ''}]
+SAMPLE_PROJECTS = []
 
 
 def load_secret():
@@ -156,9 +156,9 @@ def password_needs_rehash(stored):
 
 
 def normalize_approval_status(status, role="user"):
-    if status in ("활성화", "승인", "劝己拳", "铰牢"):
+    if status in ("활성화", "승인", "active", "approved"):
         return "활성화"
-    if status in ("비활성화", "대기", "거부", "厚劝己拳", "措扁", "芭何"):
+    if status in ("비활성화", "대기", "거부", "inactive", "pending", "rejected"):
         return "비활성화"
     return "활성화" if role == "admin" else "비활성화"
 
@@ -778,7 +778,7 @@ def create_leave_request(conn, user, payload):
     target_user = target_leave_user(conn, user, payload)
     start_date = str(payload.get("startDate") or "").strip()
     end_date = str(payload.get("endDate") or start_date).strip()
-    leave_type = str(payload.get("type") or "연차").strip()[:40]
+    leave_type = str(payload.get("type") or "?곗감").strip()[:40]
     reason = str(payload.get("reason") or "").strip()[:120]
     try:
         days = float(payload.get("days") or 0)
@@ -892,8 +892,8 @@ def log_project_actions(conn, user, entries):
     name = str(user.get("name") or "")
     role = "admin" if user.get("role") == "admin" else "user"
     for entry in entries:
-        action = str(entry.get("action") or "수정").strip() or "수정"
-        category = str(entry.get("category") or "프로젝트").strip() or "프로젝트"
+        action = str(entry.get("action") or "?섏젙").strip() or "?섏젙"
+        category = str(entry.get("category") or "?꾨줈?앺듃").strip() or "?꾨줈?앺듃"
         project_no = str(entry.get("projectNo") or "").strip()
         project_name = str(entry.get("projectName") or "").strip()
         target = str(entry.get("target") or "").strip()
@@ -1187,28 +1187,12 @@ def dataset_snapshot(conn, mode, user=None):
 
 
 def public_sample_projects():
-    projects = json.loads(json.dumps(SAMPLE_PROJECTS, ensure_ascii=False))
-    today = date.today()
-    if projects:
-        projects[0]["depositDate"] = f"{today.year}-{today.month:02d}-05"
-        projects[0]["status"] = "완료"
-        projects[0]["progressStatus"] = "완료"
-        projects[0]["clientContacts"] = [
-            {
-                "id": "sample-contact-search-001",
-                "name": "샘플 담당자",
-                "companyPhone": "02-1098-9001",
-                "personalPhone": "010-1098-9001",
-                "email": "sample@example.com",
-            }
-        ]
-    return projects
-
+    return []
 
 def read_request_json(handler):
     length = int(handler.headers.get("Content-Length") or 0)
     if length > MAX_JSON_BODY_BYTES:
-        raise ValueError("요청 데이터가 너무 큽니다.")
+        raise ValueError("?붿껌 ?곗씠?곌? ?덈Т ?쎈땲??")
     if length <= 0:
         return {}
     raw = handler.rfile.read(length).decode("utf-8")
@@ -1221,10 +1205,10 @@ def decode_data_url(data_url):
         return b""
     match = re.match(r"^data:([^;,]+);base64,(.*)$", value, re.I | re.S)
     if not match:
-        raise ValueError("첨부 파일 형식이 올바르지 않습니다.")
+        raise ValueError("泥⑤? ?뚯씪 ?뺤떇???щ컮瑜댁? ?딆뒿?덈떎.")
     mime_type = match.group(1).lower()
     if mime_type != "application/pdf":
-        raise ValueError("PDF 파일만 업로드할 수 있습니다.")
+        raise ValueError("PDF ?뚯씪留??낅줈?쒗븷 ???덉뒿?덈떎.")
     return base64.b64decode(match.group(2), validate=True)
 
 
@@ -1232,17 +1216,17 @@ def validate_pdf_payload(file_name, data_url):
     if not data_url:
         return
     if file_name and not str(file_name).lower().endswith(".pdf"):
-        raise ValueError("PDF 확장자 파일만 업로드할 수 있습니다.")
+        raise ValueError("PDF ?뺤옣???뚯씪留??낅줈?쒗븷 ???덉뒿?덈떎.")
     data = decode_data_url(data_url)
     if len(data) > MAX_PDF_BYTES:
-        raise ValueError("PDF 파일은 10MB 이하만 업로드할 수 있습니다.")
+        raise ValueError("PDF ?뚯씪? 10MB ?댄븯留??낅줈?쒗븷 ???덉뒿?덈떎.")
     if not data.startswith(b"%PDF-"):
-        raise ValueError("정상 PDF 파일이 아닙니다.")
+        raise ValueError("?뺤긽 PDF ?뚯씪???꾨떃?덈떎.")
     scan = data[: min(len(data), 2 * 1024 * 1024)]
     lowered = scan.lower()
     for marker in PDF_DANGEROUS_MARKERS:
         if marker.lower() in lowered:
-            raise ValueError("보안상 위험한 PDF 기능이 포함되어 업로드할 수 없습니다.")
+            raise ValueError("蹂댁븞???꾪뿕??PDF 湲곕뒫???ы븿?섏뼱 ?낅줈?쒗븷 ???놁뒿?덈떎.")
 
 
 def validate_project_files(projects):
@@ -1544,7 +1528,7 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
         password = str(payload.get("password") or "").strip()
         ip = self.client_address[0] if self.client_address else ""
         if login_access_locked():
-            log_login_attempt(conn, user_id, "", "user", "failure", "로그인 실패 한도 초과", ip)
+            log_login_attempt(conn, user_id, "", "user", "failure", "로그인 실패 횟수 초과", ip)
             return self.write_json({"ok": False, "message": "로그인 시도가 5회 이상 실패하여 잠시 동안 잠겼습니다. 서버를 다시 시작해야 잠금이 해제됩니다."}, HTTPStatus.TOO_MANY_REQUESTS)
         row = conn.execute("SELECT * FROM users_secure WHERE id_lookup = ?", (id_lookup(user_id),)).fetchone()
         if not row:
