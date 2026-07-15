@@ -1018,9 +1018,15 @@ async function persist() {
   syncProjectsPersistSnapshot(projects);
 }
 
+function detailAccessibleProjects() {
+  if (currentView === "monthly" || currentView === "issues") return monthlyIssueProjectSource();
+  if (currentView === "schedule" && canViewAllProjectSchedules()) return projects;
+  return accessibleProjects();
+}
+
 function selectedProject() {
   if (isCreatingProject && draftProject) return draftProject;
-  const visible = accessibleProjects();
+  const visible = detailAccessibleProjects();
   return visible.find((project) => project.id === selectedId) || visible[0] || null;
 }
 
@@ -1097,13 +1103,79 @@ function isAdmin() {
   return currentUser?.role === "admin";
 }
 
+function currentDepartment() {
+  return String(currentUser?.department || "").trim().toLowerCase();
+}
+
+function normalizeDepartmentKey(value) {
+  const department = String(value || "").trim().toLowerCase();
+  const aliases = {
+    "디자이너": "디자인",
+    "퍼블리셔": "퍼블리싱",
+    "프로그래머": "프로그램",
+    "개발": "프로그램",
+    "개발자": "프로그램",
+  };
+  return aliases[department] || department;
+}
+
+function isDepartment(...names) {
+  const department = normalizeDepartmentKey(currentDepartment());
+  return names.map((name) => normalizeDepartmentKey(name)).includes(department);
+}
+
+function canViewAllProjects() {
+  return isAdmin() || isDepartment("경영관리", "영업", "유지보수");
+}
+
+function canCreateProject() {
+  return isAdmin() || isDepartment("영업");
+}
+
+function canEditProjectDetail() {
+  return isAdmin() || isDepartment("영업", "pm", "유지보수");
+}
+
+function canViewMonthlyAndIssues() {
+  return isAdmin() || isDepartment("pm");
+}
+
+function canViewAllProjectSchedules() {
+  return isAdmin() || isDepartment("pm");
+}
+
+function assignedProjectUserName() {
+  return String(currentUser?.name || "").trim();
+}
+
+function isAssignedProject(project) {
+  const userName = assignedProjectUserName();
+  if (!userName) return false;
+  if (isDepartment("디자인", "디자이너")) return String(project.designer || "").trim() === userName;
+  if (isDepartment("퍼블리싱", "퍼블리셔")) return String(project.publisher || "").trim() === userName;
+  if (isDepartment("프로그램", "프로그래머")) return String(project.programmer || "").trim() === userName;
+  if (isDepartment("pm")) return String(project.pm || "").trim() === userName;
+  return false;
+}
+
+function canViewAssignedProjectSchedules() {
+  return isDepartment("디자인", "디자이너", "퍼블리싱", "퍼블리셔", "프로그램", "프로그래머");
+}
+
+function projectScheduleVisibleProjects() {
+  if (!currentUser) return accessibleProjects();
+  if (canViewAllProjectSchedules()) return projects;
+  if (canViewAssignedProjectSchedules()) return projects.filter(isAssignedProject);
+  return [];
+}
+
 function isReadOnlyMode() {
   return !currentUser;
 }
 
 function requireWritableAction() {
-  if (!isReadOnlyMode()) return true;
-  alert("비로그인 상태에서는 읽기 전용으로만 볼 수 있습니다. 수정하려면 로그인해 주세요.");
+  if (!isReadOnlyMode() && canEditProjectDetail()) return true;
+  alert(currentUser ? "현재 계정은 프로젝트를 수정할 권한이 없습니다." : "비로그인 상태에서는 읽기 전용으로만 볼 수 있습니다. 수정하려면 로그인해 주세요.");
   return false;
 }
 
@@ -1116,17 +1188,15 @@ function currentPmName() {
 }
 
 function accessibleProjects() {
-  if (!currentUser || isAdmin()) return projects;
-  const pmName = currentPmName();
-  if (!pmName) return [];
-  return projects.filter((project) => String(project.pm || "").trim() === pmName);
+  if (!currentUser || canViewAllProjects()) return projects;
+  return projects.filter(isAssignedProject);
 }
 
 function canAccessView(view) {
   if (view === "members" || view === "departments" || view === "adminSettings" || view === "loginLogs" || view === "projectLogs") return isAdmin();
   if (view === "leaveApprovals") return isAdmin();
+  if (view === "monthly" || view === "issues") return canViewMonthlyAndIssues();
   if (view === "leaveManagement") return Boolean(currentUser);
-  if (view === "projectLogs") return Boolean(currentUser);
   return true;
 }
 
@@ -1151,9 +1221,13 @@ function updateNavAccess() {
   document.querySelectorAll('[data-view="loginLogs"], [data-view="projectLogs"]').forEach((item) => {
     item.classList.toggle("hidden", !isAdmin());
   });
+  document.querySelectorAll('[data-view="monthly"], [data-view="issues"]').forEach((item) => {
+    item.classList.toggle("hidden", !canViewMonthlyAndIssues());
+  });
   if (!isAdmin() && (currentView === "members" || currentView === "departments" || currentView === "adminSettings" || currentView === "loginLogs" || currentView === "projectLogs" || currentView === "leaveApprovals")) {
     switchView("dashboard");
   }
+  if (!canViewMonthlyAndIssues() && (currentView === "monthly" || currentView === "issues")) switchView("dashboard");
   if (!currentUser && currentView === "leaveManagement") switchView("dashboard");
 }
 
@@ -1609,9 +1683,10 @@ function renderFilters() {
 
 
 function renderDashboardScheduleItem(entry) {
+  const canToggle = canEditProjectDetail();
   return `<article class="dashboard-schedule-item" data-dashboard-schedule-id="${escapeAttr(entry.id)}">
     <label class="dashboard-schedule-check" title="완료">
-      <input class="dashboard-schedule-check-input" type="checkbox" data-dashboard-schedule-complete="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} />
+      <input class="dashboard-schedule-check-input" type="checkbox" data-dashboard-schedule-complete="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} ${canToggle ? "" : "disabled"} />
       <span class="dashboard-schedule-check-text">완료</span>
     </label>
     <div class="dashboard-schedule-body">
@@ -1961,12 +2036,13 @@ function buildQuoteCell(project) {
     const title = project.quoteFileName ? `${project.quoteFileName} 보기` : "견적서 보기";
     return `<button class="quote-download-btn" data-quote-view-id="${project.id}" type="button" title="${escapeAttr(title)}" aria-label="견적서 보기">${QUOTE_DOWNLOAD_ICON}</button>`;
   }
+  if (!canEditProjectDetail()) return '<span class="muted">미등록</span>';
   return `<button class="quote-unregistered" data-quote-upload-project-id="${project.id}" type="button" title="견적서 등록" aria-label="견적서 등록">미등록</button>`;
 }
 
 function findProjectById(id) {
   if (isCreatingProject && draftProject?.id === id) return draftProject;
-  return accessibleProjects().find((item) => item.id === id);
+  return detailAccessibleProjects().find((item) => item.id === id);
 }
 
 function normalizeShortcutUrl(url) {
@@ -2107,7 +2183,11 @@ function renderRows() {
             </div>
           </td>
           <td>${escapeHtml(milestone)}</td>
-          <td><button class="badge status-edit ${workStatusBadgeClass(displayStatus)}" data-status-project-id="${project.id}" type="button">${escapeHtml(displayStatus)}</button></td>
+          <td>${
+            canEditProjectDetail()
+              ? `<button class="badge status-edit ${workStatusBadgeClass(displayStatus)}" data-status-project-id="${project.id}" type="button">${escapeHtml(displayStatus)}</button>`
+              : `<span class="badge ${workStatusBadgeClass(displayStatus)}">${escapeHtml(displayStatus)}</span>`
+          }</td>
           <td>${escapeHtml(project.pm || "-")}</td>
           <td>${escapeHtml(project.designer || "-")}</td>
           <td>${escapeHtml(project.publisher || "-")}</td>
@@ -2185,8 +2265,12 @@ function isDepositInViewMonth(project, viewDate = new Date()) {
   return deposit.year === view.year && deposit.month === view.month;
 }
 
+function monthlyIssueProjectSource() {
+  return canViewMonthlyAndIssues() ? projects : [];
+}
+
 function monthlyProjects() {
-  return accessibleProjects().filter((project) => {
+  return monthlyIssueProjectSource().filter((project) => {
     if (!project.monthlyCollection) return false;
     // 입금일 없음, 또는 입금일이 조회월(이번 달)인 경우만
     return !hasDepositDate(project) || isDepositInViewMonth(project);
@@ -2309,13 +2393,25 @@ function updateDetailFilledState() {
 
 function applyReadOnlyUi() {
   const readOnly = isReadOnlyMode();
-  ["newProject", "saveDetailBtn", "deleteProject", "addIssue", "addClientContact", "addCommunication", "addScheduleFromCalendar", "addScheduleFromList"].forEach((id) => {
+  const canEdit = !readOnly && canEditProjectDetail();
+  const canCreate = !readOnly && canCreateProject();
+  const visibilityById = {
+    newProject: canCreate,
+    saveDetailBtn: canEdit,
+    deleteProject: isAdmin(),
+    addIssue: canEdit,
+    addClientContact: canEdit,
+    addCommunication: canEdit,
+    addScheduleFromCalendar: canEdit,
+    addScheduleFromList: canEdit,
+  };
+  Object.entries(visibilityById).forEach(([id, visible]) => {
     const element = $(id);
-    if (element) element.classList.toggle("hidden", readOnly || element.classList.contains("admin-only") && !isAdmin());
+    if (element) element.classList.toggle("hidden", !visible);
   });
 
   const quoteAction = $("quoteAction");
-  if (quoteAction && !selectedProject()?.quoteFileData) quoteAction.classList.toggle("hidden", readOnly);
+  if (quoteAction && !selectedProject()?.quoteFileData) quoteAction.classList.toggle("hidden", !canEdit);
   [
     { id: "shortcutAction", field: "shortcutUrl" },
     { id: "intranetAction", field: "intranetUrl" },
@@ -2323,7 +2419,7 @@ function applyReadOnlyUi() {
   ].forEach(({ id, field }) => {
     const element = $(id);
     if (element && !String(selectedProject()?.[field] || "").trim()) {
-      element.classList.toggle("hidden", readOnly);
+      element.classList.toggle("hidden", !canEdit);
     }
   });
 
@@ -2331,14 +2427,14 @@ function applyReadOnlyUi() {
   if (!detailForm) return;
   detailForm.querySelectorAll("input, select, textarea").forEach((field) => {
     if (field.id === "detailSearchInput") return;
-    field.disabled = readOnly;
+    field.disabled = !canEdit;
   });
   detailForm.querySelectorAll(".issue-edit, .issue-delete, .issue-save, .issue-cancel").forEach((button) => {
-    button.classList.toggle("hidden", readOnly);
+    button.classList.toggle("hidden", !canEdit);
   });
   detailForm.querySelectorAll(".issue-complete-input, .project-schedule-complete-input, .project-schedule-edit, .project-schedule-delete, #addProjectSchedule").forEach((element) => {
-    if (element.matches("input")) element.disabled = readOnly;
-    else element.classList.toggle("hidden", readOnly);
+    if (element.matches("input")) element.disabled = !canEdit;
+    else element.classList.toggle("hidden", !canEdit);
   });
 }
 
@@ -2359,12 +2455,12 @@ function renderDetail() {
   editableFields.forEach((field) => {
     setValue(field, project[field] ?? "");
   });
-  if (currentUser && !isAdmin()) {
+  if (currentUser && isDepartment("pm")) {
     setValue("pm", currentPmName());
   }
   if ($("pm")) {
-    $("pm").readOnly = Boolean(currentUser && !isAdmin());
-    $("pm").classList.toggle("is-readonly", Boolean(currentUser && !isAdmin()));
+    $("pm").readOnly = Boolean(currentUser && isDepartment("pm"));
+    $("pm").classList.toggle("is-readonly", Boolean(currentUser && isDepartment("pm")));
   }
 
   document.querySelectorAll('[name="hostingType"]').forEach((radio) => {
@@ -2889,10 +2985,13 @@ function renderCommunications(project) {
 }
 
 function addProject() {
-  if (!requireWritableAction()) return;
+  if (!canCreateProject()) {
+    alert("프로젝트 추가는 관리자와 영업 부서만 할 수 있습니다.");
+    return;
+  }
   isCreatingProject = true;
   draftProject = createEmptyProject();
-  if (currentUser && !isAdmin()) {
+  if (currentUser && isDepartment("pm")) {
     draftProject.pm = currentPmName();
   }
   selectedId = null;
@@ -3555,6 +3654,7 @@ function statusOptions() {
 }
 
 function openStatusDialog(projectId) {
+  if (!requireWritableAction()) return;
   const project = projects.find((item) => item.id === projectId);
   if (!project) return;
   editingStatusProjectId = projectId;
@@ -4199,7 +4299,7 @@ async function deleteCompanyHoliday() {
 
 
 function issueProjects() {
-  return accessibleProjects().filter(
+  return monthlyIssueProjectSource().filter(
     (project) =>
       project.hasIssue ||
       (project.issues || []).some((issue) => {
@@ -4278,7 +4378,8 @@ function renderIssueProjectRows() {
 
 
 function allScheduleEntries() {
-  return projects.flatMap((project) =>
+  const sourceProjects = projectScheduleVisibleProjects();
+  return sourceProjects.flatMap((project) =>
     (project.schedules || []).map((entry) => {
       const normalized = normalizeScheduleEntry(project, entry);
       return {
@@ -4483,11 +4584,15 @@ function renderScheduleCalendarGrid() {
       event.stopPropagation();
       if (document.body.classList.contains("schedule-detail-open")) closeDetail();
       const entry = allScheduleEntries().find((row) => row.id === item.dataset.scheduleEntryId);
-      if (entry) openScheduleDialog(entry.date || todayDate(), { editingEntry: entry });
+      if (entry && canEditProjectDetail()) openScheduleDialog(entry.date || todayDate(), { editingEntry: entry });
+      else if (entry) showScheduleProjectDetail(entry);
     });
   });
   grid.querySelectorAll("[data-schedule-date]").forEach((item) => {
-    item.addEventListener("click", () => openScheduleDialog(item.dataset.scheduleDate));
+    item.addEventListener("click", () => {
+      if (!canEditProjectDetail()) return;
+      openScheduleDialog(item.dataset.scheduleDate);
+    });
   });
 }
 
@@ -4508,6 +4613,7 @@ function renderScheduleListRows() {
   }
   const rows = scheduleEntriesWithDemo({ start, end })
     .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")) || String(a.projectName || "").localeCompare(String(b.projectName || ""), "ko"));
+  const canToggle = canEditProjectDetail();
   tbody.innerHTML = rows.length
     ? rows.map((entry) => `<tr data-schedule-entry-id="${escapeAttr(entry.id)}" class="${entry.completed ? "is-schedule-completed" : ""}">
         <td>${escapeHtml(entry.date || "-")}</td>
@@ -4517,7 +4623,7 @@ function renderScheduleListRows() {
         <td>${escapeHtml(entry.detail || "-")}</td>
         <td class="schedule-list-complete-cell">
           <label class="schedule-list-complete" title="완료">
-            <input type="checkbox" class="schedule-list-complete-input" data-schedule-entry-id="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} />
+            <input type="checkbox" class="schedule-list-complete-input" data-schedule-entry-id="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} ${canToggle ? "" : "disabled"} />
           </label>
         </td>
       </tr>`).join("")
@@ -4536,7 +4642,8 @@ function renderScheduleListRows() {
       event.stopPropagation();
       if (document.body.classList.contains("schedule-detail-open")) closeDetail();
       const entry = allScheduleEntries().find((item) => item.id === row.dataset.scheduleEntryId);
-      if (entry) openScheduleDialog(entry.date || todayDate(), { editingEntry: entry });
+      if (entry && canEditProjectDetail()) openScheduleDialog(entry.date || todayDate(), { editingEntry: entry });
+      else if (entry) showScheduleProjectDetail(entry);
     });
   });
 }
@@ -4549,12 +4656,25 @@ function renderScheduleViews() {
 }
 
 function findProjectByScheduleInput(projectId) {
-  return accessibleProjects().find((project) => project.id === projectId) || null;
+  const source = canViewAllProjectSchedules() ? projects : accessibleProjects();
+  return source.find((project) => project.id === projectId) || null;
 }
 
 function selectedScheduleProject() {
   const id = valueOf("scheduleProjectId");
   return findProjectByScheduleInput(id);
+}
+
+function showScheduleProjectDetail(entry) {
+  const project = accessibleProjects().find((item) => item.id === entry.projectId);
+  if (!project) return;
+  selectedId = project.id;
+  isCreatingProject = false;
+  draftProject = null;
+  document.body.classList.add("detail-open", "schedule-detail-open");
+  openDetailDropdowns();
+  renderDetail();
+  openProjectScheduleDropdown();
 }
 
 function renderScheduleProjectResults() {
@@ -4566,7 +4686,8 @@ function renderScheduleProjectResults() {
     box.innerHTML = "";
     return;
   }
-  const rows = accessibleProjects().filter((project) => [project.name, project.projectNo].join(" ").toLowerCase().includes(query)).slice(0, 10);
+  const source = canViewAllProjectSchedules() ? projects : accessibleProjects();
+  const rows = source.filter((project) => [project.name, project.projectNo].join(" ").toLowerCase().includes(query)).slice(0, 10);
   box.hidden = false;
   if (!rows.length) {
     box.innerHTML = '<div class="schedule-project-result is-empty" role="presentation">검색 결과가 없습니다.</div>';
@@ -4742,8 +4863,12 @@ function renderProjectSchedules(project) {
         input.checked = !checked;
       }
     });
-    card.querySelector(".project-schedule-edit")?.addEventListener("click", () => openScheduleDialog(entry.date || todayDate(), { editingEntry: entry, projectId: project.id }));
+    card.querySelector(".project-schedule-edit")?.addEventListener("click", () => {
+      if (!requireWritableAction()) return;
+      openScheduleDialog(entry.date || todayDate(), { editingEntry: entry, projectId: project.id });
+    });
     card.querySelector(".project-schedule-delete")?.addEventListener("click", () => {
+      if (!requireWritableAction()) return;
       if (!confirm("이 일정을 삭제할까요?")) return;
       removeScheduleEntry(entry.id);
       persistEntry();
@@ -4760,6 +4885,7 @@ function openProjectScheduleDropdown() {
 }
 
 function addProjectSchedule() {
+  if (!requireWritableAction()) return;
   const project = selectedProject();
   if (!project) return;
   openScheduleDialog(todayDate(), { projectId: project.id });
@@ -4788,8 +4914,12 @@ function bindScheduleUi() {
   on("scheduleNextMonth", "click", () => moveScheduleMonth(1));
   on("scheduleListPrev", "click", () => moveScheduleList(-1));
   on("scheduleListNext", "click", () => moveScheduleList(1));
-  on("addScheduleFromCalendar", "click", () => openScheduleDialog(dateFromParts(scheduleCursor.year, scheduleCursor.month, 1)));
-  on("addScheduleFromList", "click", () => openScheduleDialog(scheduleWeekAnchor));
+  on("addScheduleFromCalendar", "click", () => {
+    if (canEditProjectDetail()) openScheduleDialog(dateFromParts(scheduleCursor.year, scheduleCursor.month, 1));
+  });
+  on("addScheduleFromList", "click", () => {
+    if (canEditProjectDetail()) openScheduleDialog(scheduleWeekAnchor);
+  });
   on("closeScheduleDialog", "click", closeScheduleDialog);
   on("scheduleForm", "submit", submitScheduleForm);
   on("scheduleSearchInput", "input", renderScheduleViews);

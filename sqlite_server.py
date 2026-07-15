@@ -1104,19 +1104,22 @@ def build_project_logs_from_diff(before_projects, after_projects):
 def merge_projects_for_user(existing_projects, incoming_projects, user):
     if is_admin(user):
         return incoming_projects
+    if not user_can_edit_projects(user):
+        return existing_projects
     incoming_by_id = {project_identity(project): project for project in incoming_projects if isinstance(project, dict) and project_identity(project)}
     merged = []
     used = set()
     for project in existing_projects:
         key = project_identity(project)
-        if key in incoming_by_id and user_can_access_project(user, project):
+        can_edit_project = user_in_department(user, "pm") or user_can_access_project(user, project)
+        if key in incoming_by_id and can_edit_project:
             candidate = incoming_by_id[key]
-            merged.append(candidate if user_can_access_project(user, candidate) else project)
+            merged.append(candidate if (user_in_department(user, "pm") or user_can_access_project(user, candidate)) else project)
             used.add(key)
         else:
             merged.append(project)
     for key, project in incoming_by_id.items():
-        if key not in used and user_can_access_project(user, project):
+        if key not in used and (user_in_department(user, "pm") or user_can_access_project(user, project)):
             merged.append(project)
     return merged
 
@@ -1172,6 +1175,52 @@ def is_admin(user):
     return bool(user and user.get("role") == "admin")
 
 
+def user_department(user):
+    return str((user or {}).get("department") or "").strip().lower()
+
+
+def normalize_department_key(value):
+    department = str(value or "").strip().lower()
+    aliases = {
+        "디자이너": "디자인",
+        "퍼블리셔": "퍼블리싱",
+        "프로그래머": "프로그램",
+        "개발": "프로그램",
+        "개발자": "프로그램",
+    }
+    return aliases.get(department, department)
+
+
+def user_in_department(user, *names):
+    department = normalize_department_key(user_department(user))
+    return department in {normalize_department_key(name) for name in names}
+
+
+def user_can_view_all_projects(user):
+    return is_admin(user) or user_in_department(user, "경영관리", "영업", "유지보수")
+
+
+def user_can_edit_projects(user):
+    return is_admin(user) or user_in_department(user, "영업", "pm", "유지보수")
+
+
+def user_assigned_to_project(user, project):
+    if not user or not isinstance(project, dict):
+        return False
+    name = str(user.get("name") or "").strip().lower()
+    if not name:
+        return False
+    if user_in_department(user, "디자인", "디자이너"):
+        return str(project.get("designer") or "").strip().lower() == name
+    if user_in_department(user, "퍼블리싱", "퍼블리셔"):
+        return str(project.get("publisher") or "").strip().lower() == name
+    if user_in_department(user, "프로그램", "프로그래머"):
+        return str(project.get("programmer") or "").strip().lower() == name
+    if user_in_department(user, "pm"):
+        return str(project.get("pm") or "").strip().lower() == name
+    return False
+
+
 def user_match_values(user):
     if not user:
         return set()
@@ -1179,17 +1228,13 @@ def user_match_values(user):
 
 
 def user_can_access_project(user, project):
-    if is_admin(user):
+    if user_can_view_all_projects(user):
         return True
-    values = user_match_values(user)
-    if not values or not isinstance(project, dict):
-        return False
-    staff_fields = ("pm", "designer", "publisher", "programmer", "manager", "owner")
-    return any(str(project.get(field) or "").strip().lower() in values for field in staff_fields)
+    return user_assigned_to_project(user, project)
 
 
 def filter_projects_for_user(projects, user):
-    if is_admin(user):
+    if is_admin(user) or user_in_department(user, "pm"):
         return projects
     return [project for project in projects if user_can_access_project(user, project)]
 
