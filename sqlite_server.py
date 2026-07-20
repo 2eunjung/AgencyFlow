@@ -871,11 +871,16 @@ def create_leave_request(conn, user, payload):
         raise ValueError("Invalid leave days.")
     year = leave_year(start_date)
     ensure_leave_balance(conn, target_user, year)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    auto_approve = bool(payload.get("autoApprove")) and is_admin(user)
+    status = "approved" if auto_approve else "pending"
+    approved_by = encrypt_text(user.get("id", "")) if auto_approve else ""
+    approved_at = now if auto_approve else ""
     conn.execute(
         """
         INSERT INTO leave_requests
-          (user_id_lookup, user_id_enc, user_name_enc, year, start_date, end_date, days, leave_type, reason_enc, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+          (user_id_lookup, user_id_enc, user_name_enc, year, start_date, end_date, days, leave_type, reason_enc, status, approved_by_enc, approved_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             id_lookup(target_user.get("id", "")),
@@ -887,8 +892,11 @@ def create_leave_request(conn, user, payload):
             days,
             leave_type,
             encrypt_text(reason),
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            status,
+            approved_by,
+            approved_at,
+            now,
+            now,
         ),
     )
 

@@ -1014,6 +1014,12 @@ body.detail-open .monthly-projects-table tbody tr.selected {
   border-color: rgba(15, 118, 110, 0.22);
 }
 
+.flag-text-btn.flag-issue {
+  color: #c2410c;
+  background: #fed7aa;
+  border-color: rgba(194, 65, 12, 0.24);
+}
+
 .flag-text-btn.flag-server {
   color: #c2410c;
   background: #ffedd5;
@@ -1378,7 +1384,7 @@ body.sidebar-collapsed.schedule-detail-open::after {
   justify-content: space-between;
   padding: 14px 20px;
   color: #1f2937;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 900;
   list-style: none;
   cursor: pointer;
@@ -1411,6 +1417,10 @@ body.sidebar-collapsed.schedule-detail-open::after {
   padding: 0 20px;
   border-top: 1px solid var(--line);
   padding-top: 16px;
+}
+
+.detail-contacts .entry-field-value {
+  font-size: 14px;
 }
 
 .form-grid {
@@ -2759,6 +2769,8 @@ body.detail-open .issue-projects-table tbody tr.selected {
   line-height: 1.2;
 }
 
+#scheduleMonthLabel,
+#vacationMonthLabel,
 #scheduleListPeriodLabel,
 #vacationListPeriodLabel {
   min-width: 220px;
@@ -2843,7 +2855,7 @@ body.detail-open .issue-projects-table tbody tr.selected {
   padding: 8px;
   border: 0;
   border-radius: 8px;
-  background: #f7faf8;
+  background: #edf7f1;
   cursor: pointer;
   text-align: left;
   outline: none;
@@ -2851,7 +2863,7 @@ body.detail-open .issue-projects-table tbody tr.selected {
 }
 
 .schedule-day:hover {
-  background: #eef5f1;
+  background: #e2f0e8;
 }
 
 .schedule-day:focus,
@@ -2862,7 +2874,7 @@ body.detail-open .issue-projects-table tbody tr.selected {
 
 .schedule-day.is-outside {
   background: #f3f4f6;
-  cursor: default;
+  cursor: pointer;
 }
 
 .schedule-day.is-outside:hover {
@@ -2883,7 +2895,7 @@ body.detail-open .issue-projects-table tbody tr.selected {
 }
 
 .schedule-day.is-outside > span {
-  color: #9ca3af;
+  color: #6b7280;
 }
 
 .schedule-day.is-today > span {
@@ -2936,6 +2948,38 @@ body.detail-open .issue-projects-table tbody tr.selected {
 
 .schedule-event-detail {
   color: #6b7280;
+}
+
+.schedule-calendar-head {
+  padding: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.schedule-calendar-head .schedule-calendar-nav {
+  grid-column: 2;
+  justify-self: center;
+}
+
+.schedule-calendar-head .schedule-add-btn {
+  grid-column: 3;
+}
+
+.schedule-calendar-actions,
+.schedule-list-actions {
+  grid-column: 3;
+  display: inline-flex;
+  justify-self: end;
+  align-items: center;
+  gap: 8px;
+}
+
+.vacation-leave-user-field {
+  position: relative;
+}
+
+#vacationLeaveDialog .member-dialog-select {
+  width: 100%;
+  max-width: none;
 }
 
 .schedule-list-toolbar {
@@ -2997,6 +3041,10 @@ body.detail-open .issue-projects-table tbody tr.selected {
   user-select: none;
 }
 
+#scheduleCalendarMonth:checked ~ .schedule-list-period-tabs label[for="scheduleCalendarMonth"],
+#scheduleCalendarWeek:checked ~ .schedule-list-period-tabs label[for="scheduleCalendarWeek"],
+#vacationCalendarMonth:checked ~ .schedule-list-period-tabs label[for="vacationCalendarMonth"],
+#vacationCalendarWeek:checked ~ .schedule-list-period-tabs label[for="vacationCalendarWeek"],
 #scheduleListMonth:checked ~ .schedule-list-period-tabs label[for="scheduleListMonth"],
 #scheduleListWeek:checked ~ .schedule-list-period-tabs label[for="scheduleListWeek"],
 #vacationListMonth:checked ~ .schedule-list-period-tabs label[for="vacationListMonth"],

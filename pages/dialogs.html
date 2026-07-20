@@ -187,6 +187,40 @@
       </form>
     </dialog>
 
+    <dialog id="vacationLeaveDialog" class="login-dialog">
+      <form id="vacationLeaveForm" class="login-card">
+        <div class="panel-head">
+          <div>
+            <h2>연차 등록</h2>
+          </div>
+          <button id="closeVacationLeaveDialog" class="icon-btn" aria-label="닫기" type="button">&times;</button>
+        </div>
+        <div class="login-body">
+          <label class="vacation-leave-user-field">이름
+            <input id="vacationLeaveUserSearch" type="search" autocomplete="off" placeholder="이름 또는 아이디 검색" required />
+            <input id="vacationLeaveUserId" type="hidden" />
+            <div id="vacationLeaveUserResults" class="schedule-project-results" hidden></div>
+          </label>
+          <label>날짜
+            <input id="vacationLeaveDate" type="date" required />
+          </label>
+          <label>구분
+            <select id="vacationLeaveType" class="member-dialog-select" required>
+              <option value="연차">연차</option>
+              <option value="오전 반차">오전 반차</option>
+              <option value="오후 반차">오후 반차</option>
+              <option value="경조사">경조사</option>
+            </select>
+          </label>
+          <label>메모
+            <input id="vacationLeaveMemo" type="text" autocomplete="off" maxlength="120" placeholder="간단 메모" />
+          </label>
+          <button class="primary-btn" type="submit">저장</button>
+          <p id="vacationLeaveMessage"></p>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="companyHolidayDialog" class="login-dialog">
       <form id="companyHolidayForm" class="login-card">
         <div class="panel-head">

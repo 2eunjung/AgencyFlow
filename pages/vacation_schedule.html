@@ -22,12 +22,23 @@
 
             <div class="schedule-calendar-wrap" id="vacationCalendarPanel">
               <div class="schedule-calendar-head">
-                <div class="schedule-calendar-nav">
-                  <button class="ghost-btn schedule-nav-btn" id="vacationPrevMonth" type="button" aria-label="이전 달">‹</button>
-                  <strong class="schedule-month-label" id="vacationMonthLabel">2026년 7월</strong>
-                  <button class="ghost-btn schedule-nav-btn" id="vacationNextMonth" type="button" aria-label="다음 달">›</button>
+                <div class="schedule-list-period">
+                  <input id="vacationCalendarMonth" class="schedule-period-input" type="radio" name="vacationCalendarPeriod" checked />
+                  <input id="vacationCalendarWeek" class="schedule-period-input" type="radio" name="vacationCalendarPeriod" />
+                  <div class="schedule-list-period-tabs" role="tablist" aria-label="캘린더 기간">
+                    <label class="schedule-list-period-tab" for="vacationCalendarMonth" role="tab">월별</label>
+                    <label class="schedule-list-period-tab" for="vacationCalendarWeek" role="tab">주별</label>
+                  </div>
+                  <div class="schedule-calendar-nav">
+                    <button class="ghost-btn schedule-nav-btn" id="vacationPrevMonth" type="button" aria-label="이전 기간">‹</button>
+                    <strong class="schedule-month-label" id="vacationMonthLabel">2026년 7월</strong>
+                    <button class="ghost-btn schedule-nav-btn" id="vacationNextMonth" type="button" aria-label="다음 기간">›</button>
+                  </div>
                 </div>
-                <button class="schedule-add-btn admin-only hidden" id="companyHolidayAddBtn" type="button">+ 휴일 추가</button>
+                <div class="schedule-calendar-actions">
+                  <button class="schedule-add-btn admin-only hidden" id="vacationLeaveAddBtn" type="button">+ 연차 등록</button>
+                  <button class="schedule-add-btn admin-only hidden" id="companyHolidayAddBtn" type="button">+ 휴일 추가</button>
+                </div>
               </div>
               <div class="schedule-calendar-grid" id="vacationCalendarGrid" aria-label="휴가 일정 캘린더"></div>
             </div>
@@ -47,7 +58,10 @@
                     <button class="ghost-btn schedule-nav-btn" id="vacationListNext" type="button" aria-label="다음 기간">›</button>
                   </div>
                 </div>
-                <button class="schedule-add-btn admin-only hidden" id="companyHolidayAddBtnList" type="button">+ 휴일 추가</button>
+                <div class="schedule-list-actions">
+                  <button class="schedule-add-btn admin-only hidden" id="vacationLeaveAddBtnList" type="button">+ 연차 등록</button>
+                  <button class="schedule-add-btn admin-only hidden" id="companyHolidayAddBtnList" type="button">+ 휴일 추가</button>
+                </div>
               </div>
               <div class="table-wrap schedule-table-wrap">
                 <table class="schedule-list-table management-table">

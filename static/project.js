@@ -562,6 +562,7 @@ let currentUser = null;
 let vacationCursor = { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
 let vacationWeekAnchor = todayDate();
 let editingCompanyHolidayId = "";
+let selectedVacationLeaveUserId = "";
 const KOREA_PUBLIC_HOLIDAYS = [
   { date: "2026-01-01", title: "신정" },
   { date: "2026-02-16", title: "설날 연휴" },
@@ -1977,18 +1978,16 @@ function toggleListSort(listName, key) {
   else renderRows();
 }
 
-function buildProjectFlagIcons(project, options = {}) {
-  const { showMonthlyWhenDeposited = false } = options;
+function buildProjectFlagIcons(project) {
   const flags = [];
   if (project.hasForeignLanguage) {
     flags.push(`<span class="flag-text-btn flag-lang" title="다국어">다국어</span>`);
   }
-  // 프로젝트 목록: 당월수금 체크 + 입금일 미등록일 때만 표시
-  // 당월수금 목록: 입금일이 있어도 표시
-  const showMonthlyBadge =
-    project.monthlyCollection && (showMonthlyWhenDeposited || !hasDepositDate(project));
-  if (showMonthlyBadge) {
+  if (project.monthlyCollection) {
     flags.push(`<span class="flag-text-btn flag-money" title="당월수금">당월수금</span>`);
+  }
+  if (project.hasIssue) {
+    flags.push(`<span class="flag-text-btn flag-issue" title="이슈">이슈</span>`);
   }
   if (project.hostingType === "단독서버") {
     flags.push(`<span class="flag-text-btn flag-server" title="단독서버">단독서버</span>`);
@@ -2319,7 +2318,7 @@ function renderMonthlyRows() {
                 <div class="project-title-cell">
                   ${buildDueDateBadge(project)}
                   <span class="project-name">${escapeHtml(project.name || "이름 없음")}</span>
-                  ${buildProjectFlagIcons(project, { showMonthlyWhenDeposited: true })}
+                  ${buildProjectFlagIcons(project)}
                 </div>
               </td>
               <td>${escapeHtml(milestone)}</td>
@@ -2389,6 +2388,11 @@ function updateDetailFilledState() {
     const checked = row.querySelector('input[type="radio"]:checked, input[type="checkbox"]:checked');
     row.classList.toggle("is-filled", Boolean(checked));
   });
+}
+
+function updateDetailHeaderChecks() {
+  $("issueCheckLabel")?.classList.toggle("is-active", checkedOf("hasIssue"));
+  $("monthlyCollectionLabel")?.classList.toggle("is-active", checkedOf("monthlyCollection"));
 }
 
 function applyReadOnlyUi() {
@@ -2473,6 +2477,7 @@ function renderDetail() {
     radio.checked = radio.value === (project.hasLanding ? "landing" : "normal");
   });
   $("issueCheckLabel")?.classList.toggle("is-active", Boolean(project.hasIssue));
+  $("monthlyCollectionLabel")?.classList.toggle("is-active", Boolean(project.monthlyCollection));
 
   const hasQuote = Boolean(project.quoteFileData);
   const hasHome = Boolean(String(project.shortcutUrl || "").trim());
@@ -4102,6 +4107,16 @@ function vacationHolidaysForMonth(year, month) {
   return vacationHolidaysForRange(monthStart, monthEnd);
 }
 
+function calendarCellDate(year, month, offset) {
+  const date = new Date(year, month - 1, 1 + offset);
+  return {
+    year: date.getFullYear(),
+    month: date.getMonth() + 1,
+    day: date.getDate(),
+    date: dateFromParts(date.getFullYear(), date.getMonth() + 1, date.getDate()),
+  };
+}
+
 function vacationHolidayLabel(holiday) {
   return `${holiday.kind || "휴일"} · ${holiday.title || "-"}`;
 }
@@ -4111,29 +4126,60 @@ function companyHolidayEventAttributes(holiday) {
   return ` role="button" tabindex="0" data-company-holiday-id="${escapeHtml(holiday.id)}"`;
 }
 
+function vacationCalendarMode() {
+  return $("vacationCalendarWeek")?.checked ? "week" : "month";
+}
+
 function renderVacationCalendarGrid() {
   const grid = $("vacationCalendarGrid");
   if (!grid) return;
+  const mode = vacationCalendarMode();
   const { year, month } = vacationCursor;
-  setText("vacationMonthLabel", monthLabel(year, month));
-  const requests = vacationRequestsForMonth(year, month);
-  const holidays = vacationHolidaysForMonth(year, month);
-  const first = new Date(year, month - 1, 1);
-  const startOffset = first.getDay();
-  const daysInMonth = new Date(year, month, 0).getDate();
   const today = todayDate();
   const weekday = ["일", "월", "화", "수", "목", "금", "토"];
   const cells = weekday.map((day) => `<div class="schedule-weekday">${day}</div>`);
-  for (let i = 0; i < 42; i += 1) {
-    const dayNumber = i - startOffset + 1;
-    const inMonth = dayNumber >= 1 && dayNumber <= daysInMonth;
-    const date = inMonth ? dateFromParts(year, month, dayNumber) : "";
-    const dayRequests = inMonth
-      ? requests.filter((request) => datesBetween(request.startDate, request.endDate).includes(date))
-      : [];
-    const dayHolidays = inMonth ? holidays.filter((holiday) => holiday.date === date) : [];
+  let start;
+  let end;
+  let totalCells;
+  let getCell;
+  let activeYear = year;
+  let activeMonth = month;
+  if (mode === "week") {
+    start = startOfWeekMonday(vacationWeekAnchor);
+    end = addDays(start, 6);
+    const parts = parseDateParts(vacationWeekAnchor);
+    if (parts) {
+      activeYear = parts.year;
+      activeMonth = parts.month;
+    }
+    setText("vacationMonthLabel", `${start} ~ ${end}`);
+    totalCells = 7;
+    getCell = (index) => {
+      const date = addDays(start, index);
+      const parts = parseDateParts(date);
+      return { ...parts, date };
+    };
+  } else {
+    const first = new Date(year, month - 1, 1);
+    const startOffset = first.getDay();
+    const firstCell = calendarCellDate(year, month, -startOffset);
+    const lastCell = calendarCellDate(year, month, 34 - startOffset);
+    start = firstCell.date;
+    end = lastCell.date;
+    setText("vacationMonthLabel", monthLabel(year, month));
+    totalCells = 35;
+    getCell = (index) => calendarCellDate(year, month, index - startOffset);
+  }
+  const requests = vacationRequestsForRange(start, end);
+  const holidays = vacationHolidaysForRange(start, end);
+  for (let i = 0; i < totalCells; i += 1) {
+    const cell = getCell(i);
+    const inMonth = cell.year === activeYear && cell.month === activeMonth;
+    const date = cell.date;
+    const dayRequests = requests.filter((request) => datesBetween(request.startDate, request.endDate).includes(date));
+    const dayHolidays = holidays.filter((holiday) => holiday.date === date);
     cells.push(`<div class="schedule-day ${inMonth ? "" : "is-outside"} ${date === today ? "is-today" : ""}">
-      <span>${inMonth ? dayNumber : ""}</span>
+      <span>${cell.day}</span>
       ${dayHolidays.map((holiday) => `<div class="schedule-event is-holiday"${companyHolidayEventAttributes(holiday)}>
         <strong class="schedule-event-name">${escapeHtml(vacationHolidayLabel(holiday))}</strong>
       </div>`).join("")}
@@ -4197,7 +4243,7 @@ function renderVacationScheduleRows() {
 
 function renderVacationSchedule() {
   if (!$("vacationScheduleView")) return;
-  ["companyHolidayAddBtn", "companyHolidayAddBtnList"].forEach((id) => {
+  ["companyHolidayAddBtn", "companyHolidayAddBtnList", "vacationLeaveAddBtn", "vacationLeaveAddBtnList"].forEach((id) => {
     $(id)?.classList.toggle("hidden", !isAdmin());
   });
   renderVacationCalendarGrid();
@@ -4220,6 +4266,11 @@ async function refreshVacationSchedule() {
 }
 
 function moveVacationMonth(amount) {
+  if (vacationCalendarMode() === "week") {
+    vacationWeekAnchor = addDays(vacationWeekAnchor, amount * 7);
+    renderVacationSchedule();
+    return;
+  }
   const date = new Date(vacationCursor.year, vacationCursor.month - 1 + amount, 1);
   vacationCursor = { year: date.getFullYear(), month: date.getMonth() + 1 };
   renderVacationSchedule();
@@ -4233,6 +4284,121 @@ function moveVacationList(amount) {
     return;
   }
   renderVacationSchedule();
+}
+
+function vacationLeaveDaysByType(type) {
+  return String(type || "").includes("반차") ? 0.5 : 1;
+}
+
+function vacationLeaveActiveUsers() {
+  return projectRepository
+    .getUsers()
+    .filter((user) => user.approvalStatus === "활성화")
+    .sort((a, b) => String(a.name || a.id || "").localeCompare(String(b.name || b.id || ""), "ko"));
+}
+
+function selectedVacationLeaveUser() {
+  return vacationLeaveActiveUsers().find((user) => user.id === selectedVacationLeaveUserId) || null;
+}
+
+function renderVacationLeaveUserResults() {
+  const box = $("vacationLeaveUserResults");
+  if (!box) return;
+  const query = String(valueOf("vacationLeaveUserSearch") || "").trim().toLowerCase();
+  if (!query) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  const rows = vacationLeaveActiveUsers()
+    .filter((user) => [user.id, user.name, user.department].join(" ").toLowerCase().includes(query))
+    .slice(0, 10);
+  box.hidden = false;
+  if (!rows.length) {
+    box.innerHTML = '<div class="schedule-project-result is-empty" role="presentation">검색 결과가 없습니다.</div>';
+    return;
+  }
+  box.innerHTML = rows
+    .map(
+      (user) => `<button type="button" class="schedule-project-result" data-vacation-leave-user-id="${escapeAttr(user.id)}">
+        <span class="schedule-project-result-no">${escapeHtml(user.department || "-")}</span>
+        <span class="schedule-project-result-name">${escapeHtml(user.name || user.id)} (${escapeHtml(user.id)})</span>
+      </button>`
+    )
+    .join("");
+  box.querySelectorAll("[data-vacation-leave-user-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const user = vacationLeaveActiveUsers().find((item) => item.id === button.dataset.vacationLeaveUserId);
+      if (!user) return;
+      selectedVacationLeaveUserId = user.id;
+      setValue("vacationLeaveUserId", user.id);
+      setValue("vacationLeaveUserSearch", `${user.name || user.id} (${user.id})`);
+      box.hidden = true;
+      box.innerHTML = "";
+    });
+  });
+}
+
+async function openVacationLeaveDialog() {
+  if (!isAdmin()) return;
+  try {
+    if (!projectRepository.getUsers().length) await projectRepository.refreshUsers();
+  } catch (error) {
+    console.error(error);
+  }
+  selectedVacationLeaveUserId = "";
+  setValue("vacationLeaveUserSearch", "");
+  setValue("vacationLeaveUserId", "");
+  setValue("vacationLeaveDate", todayDate());
+  setValue("vacationLeaveType", "연차");
+  setValue("vacationLeaveMemo", "");
+  setText("vacationLeaveMessage", "");
+  if ($("vacationLeaveUserResults")) {
+    $("vacationLeaveUserResults").hidden = true;
+    $("vacationLeaveUserResults").innerHTML = "";
+  }
+  $("vacationLeaveDialog")?.showModal();
+}
+
+function closeVacationLeaveDialog() {
+  selectedVacationLeaveUserId = "";
+  $("vacationLeaveUserResults") && ($("vacationLeaveUserResults").hidden = true);
+  $("vacationLeaveDialog")?.close();
+}
+
+async function submitVacationLeaveForm(event) {
+  event.preventDefault();
+  if (!isAdmin()) return;
+  const userId = valueOf("vacationLeaveUserId") || selectedVacationLeaveUserId;
+  const date = valueOf("vacationLeaveDate");
+  const type = valueOf("vacationLeaveType") || "연차";
+  const user = selectedVacationLeaveUser();
+  if (!userId || !date || !type || !user) {
+    setText("vacationLeaveMessage", "회원, 날짜, 구분을 선택해 주세요.");
+    return;
+  }
+  const payload = {
+    userId,
+    startDate: date,
+    endDate: date,
+    type,
+    days: vacationLeaveDaysByType(type),
+    reason: valueOf("vacationLeaveMemo").trim(),
+    autoApprove: true,
+  };
+  try {
+    await projectRepository.createLeaveRequest(payload);
+    closeVacationLeaveDialog();
+    await projectRepository.refreshVacationSchedule();
+    await projectRepository.refreshUsers();
+    if (currentView === "leaveApprovals") await refreshLeaveApprovals();
+    if (currentView === "leaveManagement") await refreshLeaves();
+    renderVacationSchedule();
+    renderMembers();
+  } catch (error) {
+    console.error(error);
+    setText("vacationLeaveMessage", error.message || "연차 등록 중 오류가 발생했습니다.");
+  }
 }
 
 function findCompanyHoliday(id) {
@@ -4548,6 +4714,10 @@ function monthLabel(year, month) {
   return `${year}년 ${month}월`;
 }
 
+function scheduleCalendarMode() {
+  return $("scheduleCalendarWeek")?.checked ? "week" : "month";
+}
+
 function scheduleListMode() {
   return $("scheduleListWeek")?.checked ? "week" : "month";
 }
@@ -4555,23 +4725,52 @@ function scheduleListMode() {
 function renderScheduleCalendarGrid() {
   const grid = $("scheduleCalendarGrid");
   if (!grid) return;
+  const mode = scheduleCalendarMode();
   const { year, month } = scheduleCursor;
-  setText("scheduleMonthLabel", monthLabel(year, month));
-  const entries = scheduleEntriesWithDemo({ year, month });
-  const first = new Date(year, month - 1, 1);
-  const startOffset = first.getDay();
-  const daysInMonth = new Date(year, month, 0).getDate();
   const today = todayDate();
   const weekday = ["일", "월", "화", "수", "목", "금", "토"];
   const cells = weekday.map((day) => `<div class="schedule-weekday">${day}</div>`);
-  for (let i = 0; i < 42; i += 1) {
-    const dayNumber = i - startOffset + 1;
-    const inMonth = dayNumber >= 1 && dayNumber <= daysInMonth;
-    const date = inMonth ? dateFromParts(year, month, dayNumber) : "";
-    const dayEntries = inMonth ? entries.filter((entry) => entry.date === date) : [];
-    cells.push(`<button class="schedule-day ${inMonth ? "" : "is-outside"} ${date === today ? "is-today" : ""}" type="button" ${inMonth ? `data-schedule-date="${date}"` : ""}>
-      <span>${inMonth ? dayNumber : ""}</span>
-      ${dayEntries.map((entry) => `<div class="schedule-event ${entry.completed ? "is-completed" : ""}" data-schedule-entry-id="${escapeAttr(entry.id)}">
+  let start;
+  let end;
+  let totalCells;
+  let getCell;
+  let activeYear = year;
+  let activeMonth = month;
+  if (mode === "week") {
+    start = startOfWeekMonday(scheduleWeekAnchor);
+    end = addDays(start, 6);
+    const parts = parseDateParts(scheduleWeekAnchor);
+    if (parts) {
+      activeYear = parts.year;
+      activeMonth = parts.month;
+    }
+    setText("scheduleMonthLabel", `${start} ~ ${end}`);
+    totalCells = 7;
+    getCell = (index) => {
+      const date = addDays(start, index);
+      const parts = parseDateParts(date);
+      return { ...parts, date };
+    };
+  } else {
+    const first = new Date(year, month - 1, 1);
+    const startOffset = first.getDay();
+    const firstCell = calendarCellDate(year, month, -startOffset);
+    const lastCell = calendarCellDate(year, month, 34 - startOffset);
+    start = firstCell.date;
+    end = lastCell.date;
+    setText("scheduleMonthLabel", monthLabel(year, month));
+    totalCells = 35;
+    getCell = (index) => calendarCellDate(year, month, index - startOffset);
+  }
+  const entries = scheduleEntriesWithDemo({ start, end });
+  for (let i = 0; i < totalCells; i += 1) {
+    const cell = getCell(i);
+    const inMonth = cell.year === activeYear && cell.month === activeMonth;
+    const date = cell.date;
+    const visibleEntries = entries.filter((entry) => entry.date === date);
+    cells.push(`<button class="schedule-day ${inMonth ? "" : "is-outside"} ${date === today ? "is-today" : ""}" type="button" data-schedule-date="${date}">
+      <span>${cell.day}</span>
+      ${visibleEntries.map((entry) => `<div class="schedule-event ${entry.completed ? "is-completed" : ""}" data-schedule-entry-id="${escapeAttr(entry.id)}">
         <strong class="schedule-event-name">${escapeHtml(entry.projectName || "-")}</strong>
         <small class="schedule-event-meta">${escapeHtml(entry.milestone || "-")} · ${escapeHtml(scheduleStaffBadgeText(entry))}</small>
         <small class="schedule-event-detail">${escapeHtml(entry.detail || "-")}</small>
@@ -4892,6 +5091,11 @@ function addProjectSchedule() {
 }
 
 function moveScheduleMonth(amount) {
+  if (scheduleCalendarMode() === "week") {
+    scheduleWeekAnchor = addDays(scheduleWeekAnchor, amount * 7);
+    renderScheduleViews();
+    return;
+  }
   const date = new Date(scheduleCursor.year, scheduleCursor.month - 1 + amount, 1);
   scheduleCursor = { year: date.getFullYear(), month: date.getMonth() + 1 };
   renderScheduleViews();
@@ -4914,6 +5118,8 @@ function bindScheduleUi() {
   on("scheduleNextMonth", "click", () => moveScheduleMonth(1));
   on("scheduleListPrev", "click", () => moveScheduleList(-1));
   on("scheduleListNext", "click", () => moveScheduleList(1));
+  on("scheduleCalendarMonth", "change", renderScheduleCalendarGrid);
+  on("scheduleCalendarWeek", "change", renderScheduleCalendarGrid);
   on("addScheduleFromCalendar", "click", () => {
     if (canEditProjectDetail()) openScheduleDialog(dateFromParts(scheduleCursor.year, scheduleCursor.month, 1));
   });
@@ -5108,6 +5314,7 @@ document.addEventListener("input", (event) => {
 
 document.addEventListener("change", (event) => {
   if (event.target.closest(".detail-main-grid")) updateDetailFilledState();
+  if (event.target.id === "hasIssue" || event.target.id === "monthlyCollection") updateDetailHeaderChecks();
   if (event.target.id === "pmFilter") {
     progressStatusFilter = "";
     milestoneFilter = "";
@@ -5119,6 +5326,15 @@ document.addEventListener("change", (event) => {
 });
 
 on("departmentAddBtn", "click", addDepartment);
+on("vacationLeaveAddBtn", "click", openVacationLeaveDialog);
+on("vacationLeaveAddBtnList", "click", openVacationLeaveDialog);
+on("closeVacationLeaveDialog", "click", closeVacationLeaveDialog);
+on("vacationLeaveForm", "submit", submitVacationLeaveForm);
+on("vacationLeaveUserSearch", "input", () => {
+  selectedVacationLeaveUserId = "";
+  setValue("vacationLeaveUserId", "");
+  renderVacationLeaveUserResults();
+});
 on("companyHolidayAddBtn", "click", () => openCompanyHolidayDialog());
 on("companyHolidayAddBtnList", "click", () => openCompanyHolidayDialog());
 on("closeCompanyHolidayDialog", "click", closeCompanyHolidayDialog);
@@ -5262,6 +5478,8 @@ on("vacationPrevMonth", "click", () => moveVacationMonth(-1));
 on("vacationNextMonth", "click", () => moveVacationMonth(1));
 on("vacationListPrev", "click", () => moveVacationList(-1));
 on("vacationListNext", "click", () => moveVacationList(1));
+on("vacationCalendarMonth", "change", renderVacationCalendarGrid);
+on("vacationCalendarWeek", "change", renderVacationCalendarGrid);
 on("statusForm", "submit", submitStatusChange);
 on("closeStatus", "click", () => $("statusDialog")?.close());
 
