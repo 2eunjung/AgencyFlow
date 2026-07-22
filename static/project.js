@@ -560,7 +560,7 @@ const UI_SESSION_STATE_KEY = "agencyflow.ui.state";
 let selectedId = null;
 let loginUser = "";
 let currentUser = null;
-let vacationCursor = { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
+let vacationCursor = currentKstYearMonth();
 let vacationWeekAnchor = todayDate();
 let editingCompanyHolidayId = "";
 let selectedLeaveUserId = "";
@@ -593,7 +593,7 @@ let draftProject = null;
 let editingIssueId = "";
 let editingContactId = "";
 let editingCommunicationId = "";
-let scheduleCursor = { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
+let scheduleCursor = currentKstYearMonth();
 let scheduleWeekAnchor = todayDate();
 let scheduleDialogEditId = "";
 let scheduleUiReady = false;
@@ -711,8 +711,29 @@ function normalizeScheduleEntry(project, entry) {
   };
 }
 
+function kstDateParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .formatToParts(date)
+    .reduce((acc, part) => {
+      acc[part.type] = part.value;
+      return acc;
+    }, {});
+  return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) };
+}
+
 function todayDate() {
-  return new Date().toISOString().slice(0, 10);
+  const parts = kstDateParts();
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function currentKstYearMonth() {
+  const parts = kstDateParts();
+  return { year: parts.year, month: parts.month };
 }
 
 function issueStatusOptions() {
@@ -3237,7 +3258,7 @@ function handleQuoteAction() {
 }
 
 function downloadStamp() {
-  return new Date().toISOString().slice(0, 10);
+  return todayDate();
 }
 
 function triggerDownload(blob, filename) {
@@ -3497,11 +3518,14 @@ async function applyDatasetMode(mode) {
   const snapshot = await projectRepository.loadDataset(mode);
   projects = snapshot.projects.map(normalizeProject).filter(hasProjectNo);
   adminProjects = snapshot.adminProjects.filter((project) => project.projectNo);
+  loginUser = snapshot.loginUser || "";
+  currentUser = snapshot.currentUser || null;
   mergeAdminFields();
   selectedId = accessibleProjects()[0]?.id || null;
   cancelCreateProject();
   document.body.classList.remove("detail-open", "schedule-detail-open");
   syncProjectsPersistSnapshot(projects);
+  updateAuthUi();
   renderAll();
 }
 
@@ -3526,7 +3550,13 @@ async function submitLogin(event) {
     setValue("loginPassword", "");
     setText("loginMessage", "");
     await applyDatasetMode("private");
-    if (isAdmin()) void refreshDepartments();
+    if (projects.length === 0) {
+      await applyDatasetMode("private");
+    }
+    if (isAdmin()) {
+      await refreshMemberManagementData();
+      void refreshDepartments();
+    }
   } catch (error) {
     console.error(error);
     setText("loginMessage", error.message || "서버에 연결할 수 없습니다. sqlite_server.py 실행 여부를 확인해 주세요.");

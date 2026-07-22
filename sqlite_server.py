@@ -27,6 +27,15 @@ MAX_PDF_BYTES = 10 * 1024 * 1024
 SESSION_TTL_SECONDS = 60 * 60
 SESSION_TOKEN_BYTES = 32
 LOGIN_FAILURE_LIMIT = 5
+ALLOW_WEAK_ADMIN_PASSWORD = os.environ.get("AGENCY_FLOW_ALLOW_WEAK_ADMIN", "").strip().lower() in {"1", "true", "yes"}
+SECURITY_HEADERS = {
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
+}
 SESSIONS = {}
 LOGIN_FAILURE_COUNT = 0
 LOGIN_LOCKED = False
@@ -127,7 +136,7 @@ def decrypt_text(value):
     cipher = raw[16:-32]
     expected = hmac.new(crypto_key("identity-auth"), nonce + cipher, hashlib.sha256).digest()
     if not hmac.compare_digest(tag, expected):
-        raise ValueError("Encrypted user data was modified.")
+        raise ValueError("Encrypted data validation failed.")
     stream = keystream(crypto_key("identity-encryption"), nonce, len(cipher))
     plain = bytes(a ^ b for a, b in zip(cipher, stream))
     return plain.decode("utf-8")
@@ -170,6 +179,24 @@ def normalize_approval_status(status, role="user"):
     if status in ("비활성화", "대기", "거부", "inactive", "pending", "rejected"):
         return "비활성화"
     return "활성화" if role == "admin" else "비활성화"
+
+
+def is_strong_password(password):
+    value = str(password or "")
+    return len(value) >= 8 and re.search(r"[A-Za-z]", value) and re.search(r"[0-9]", value) and re.search(r"[^A-Za-z0-9]", value)
+
+
+def is_default_admin_password(user_id, password):
+    return str(user_id or "").strip().lower() == DEFAULT_ADMIN_ID and str(password or "") == "admin"
+
+
+def request_origin_allowed(handler):
+    origin = handler.headers.get("Origin") or handler.headers.get("Referer") or ""
+    if not origin:
+        return True
+    parsed = urlparse(origin)
+    host = handler.headers.get("Host") or ""
+    return not parsed.netloc or parsed.netloc == host
 
 
 
@@ -1346,12 +1373,14 @@ def public_sample_projects():
 def read_request_json(handler):
     length = int(handler.headers.get("Content-Length") or 0)
     if length > MAX_JSON_BODY_BYTES:
-        raise ValueError("?붿껌 ?곗씠?곌? ?덈Т ?쎈땲??")
+        raise ValueError("요청 데이터가 너무 큽니다.")
     if length <= 0:
         return {}
     raw = handler.rfile.read(length).decode("utf-8")
-    return json.loads(raw or "{}")
-
+    try:
+        return json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        raise ValueError("요청 JSON 형식이 올바르지 않습니다.")
 
 def decode_data_url(data_url):
     value = str(data_url or "")
@@ -1359,29 +1388,27 @@ def decode_data_url(data_url):
         return b""
     match = re.match(r"^data:([^;,]+);base64,(.*)$", value, re.I | re.S)
     if not match:
-        raise ValueError("泥⑤? ?뚯씪 ?뺤떇???щ컮瑜댁? ?딆뒿?덈떎.")
+        raise ValueError("첨부 파일 형식이 올바르지 않습니다.")
     mime_type = match.group(1).lower()
     if mime_type != "application/pdf":
-        raise ValueError("PDF ?뚯씪留??낅줈?쒗븷 ???덉뒿?덈떎.")
+        raise ValueError("PDF 파일만 업로드할 수 있습니다.")
     return base64.b64decode(match.group(2), validate=True)
-
 
 def validate_pdf_payload(file_name, data_url):
     if not data_url:
         return
     if file_name and not str(file_name).lower().endswith(".pdf"):
-        raise ValueError("PDF ?뺤옣???뚯씪留??낅줈?쒗븷 ???덉뒿?덈떎.")
+        raise ValueError("PDF 확장자 파일만 업로드할 수 있습니다.")
     data = decode_data_url(data_url)
     if len(data) > MAX_PDF_BYTES:
-        raise ValueError("PDF ?뚯씪? 10MB ?댄븯留??낅줈?쒗븷 ???덉뒿?덈떎.")
-    if not data.startswith(b"%PDF-"):
-        raise ValueError("?뺤긽 PDF ?뚯씪???꾨떃?덈떎.")
+        raise ValueError("PDF 파일은 10MB 이하만 업로드할 수 있습니다.")
+    if not data.startswith(b"%PDF-") or b"%%EOF" not in data[-2048:]:
+        raise ValueError("정상 PDF 파일이 아닙니다.")
     scan = data[: min(len(data), 2 * 1024 * 1024)]
     lowered = scan.lower()
     for marker in PDF_DANGEROUS_MARKERS:
         if marker.lower() in lowered:
-            raise ValueError("蹂댁븞???꾪뿕??PDF 湲곕뒫???ы븿?섏뼱 ?낅줈?쒗븷 ???놁뒿?덈떎.")
-
+            raise ValueError("보안상 위험한 PDF 기능이 포함되어 업로드할 수 없습니다.")
 
 def validate_project_files(projects):
     for project in projects:
@@ -1430,7 +1457,8 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
+        for name, value in SECURITY_HEADERS.items():
+            self.send_header(name, value)
         super().end_headers()
 
     def write_json(self, payload, status=HTTPStatus.OK):
@@ -1442,7 +1470,10 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def write_error_json(self, message, status=HTTPStatus.BAD_REQUEST):
-        self.write_json({"ok": False, "message": message}, status)
+        safe_message = str(message or "요청을 처리하지 못했습니다.")
+        if "Encrypted data validation failed" in safe_message or "Encrypted user data" in safe_message:
+            safe_message = "데이터를 불러오지 못했습니다. 관리자에게 문의하세요."
+        self.write_json({"ok": False, "message": safe_message}, status)
 
     def write_html(self, html, status=HTTPStatus.OK):
         body = html.encode("utf-8")
@@ -1532,6 +1563,8 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
             return self.write_error_json("Internal server error.", HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def do_PUT(self):
+        if not request_origin_allowed(self):
+            return self.write_error_json("허용되지 않은 요청 출처입니다.", HTTPStatus.FORBIDDEN)
         parsed = urlparse(self.path)
         if not parsed.path.startswith("/api/"):
             return self.write_error_json("Unknown API endpoint.", HTTPStatus.NOT_FOUND)
@@ -1613,6 +1646,8 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
             return self.write_error_json("Internal server error.", HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def do_POST(self):
+        if not request_origin_allowed(self):
+            return self.write_error_json("허용되지 않은 요청 출처입니다.", HTTPStatus.FORBIDDEN)
         parsed = urlparse(self.path)
         try:
             payload = read_request_json(self)
@@ -1659,6 +1694,8 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
             return self.write_error_json("Internal server error.", HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def do_DELETE(self):
+        if not request_origin_allowed(self):
+            return self.write_error_json("허용되지 않은 요청 출처입니다.", HTTPStatus.FORBIDDEN)
         parsed = urlparse(self.path)
         try:
             with connect() as conn:
@@ -1710,6 +1747,9 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
             log_login_attempt(conn, user["id"], user.get("name", ""), user.get("role", "user"), "failure", "아이디 또는 비밀번호 불일치", ip)
             record_login_failure()
             return self.write_json({"ok": False, "message": "아이디 또는 비밀번호가 올바르지 않습니다."})
+        if is_default_admin_password(user_id, password) and not ALLOW_WEAK_ADMIN_PASSWORD:
+            log_login_attempt(conn, user["id"], user.get("name", ""), user.get("role", "user"), "failure", "?? ??? ???? ??", ip)
+            return self.write_json({"ok": False, "message": "기본 관리자 비밀번호는 사용할 수 없습니다. 관리자 비밀번호를 변경해 주세요."}, HTTPStatus.FORBIDDEN)
         approval = normalize_approval_status(row["approval_status"], row["role"])
         if not is_active_account(row):
             log_login_attempt(conn, user["id"], user.get("name", ""), user.get("role", "user"), "failure", "비활성화 계정", ip)
@@ -1733,6 +1773,10 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
             return self.write_json({"ok": False, "message": "아이디 형식이 올바르지 않습니다.", "users": get_users(conn)})
         if not password or not name:
             return self.write_json({"ok": False, "message": "아이디, 비밀번호, 이름을 모두 입력하세요.", "users": get_users(conn)})
+        if not is_strong_password(password):
+            return self.write_json({"ok": False, "message": "비밀번호는 알파벳, 숫자, 특수문자를 포함해 8자 이상이어야 합니다.", "users": get_users(conn)})
+        if is_default_admin_password(user_id, password):
+            return self.write_json({"ok": False, "message": "기본 관리자 비밀번호는 사용할 수 없습니다.", "users": get_users(conn)})
         if conn.execute("SELECT 1 FROM users_secure WHERE id_lookup = ?", (id_lookup(user_id),)).fetchone():
             return self.write_json({"ok": False, "message": "이미 사용 중인 아이디입니다.", "users": get_users(conn)})
         upsert_secure_user(conn, user_id, hash_password(password), name[:80], role, approval, department)
@@ -1753,8 +1797,13 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
         if current["id"].lower() == DEFAULT_ADMIN_ID:
             role = "admin"
             approval = "활성화"
-        if str(payload.get("password") or "").strip():
-            password = hash_password(str(payload.get("password")).strip())
+        new_password = str(payload.get("password") or "").strip()
+        if new_password:
+            if not is_strong_password(new_password):
+                return self.write_json({"ok": False, "message": "비밀번호는 알파벳, 숫자, 특수문자를 포함해 8자 이상이어야 합니다.", "users": get_users(conn)})
+            if is_default_admin_password(current["id"], new_password):
+                return self.write_json({"ok": False, "message": "기본 관리자 비밀번호는 사용할 수 없습니다.", "users": get_users(conn)})
+            password = hash_password(new_password)
         upsert_secure_user(conn, current["id"], password, name, role, approval, department)
         conn.commit()
         next_row = conn.execute("SELECT * FROM users_secure WHERE id_lookup = ?", (id_lookup(current["id"]),)).fetchone()
