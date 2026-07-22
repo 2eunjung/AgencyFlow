@@ -801,6 +801,7 @@ def leave_request_payload(row):
         "status": leave_status_label(row["status"]),
         "statusCode": row["status"],
         "approvedBy": decrypt_text(row["approved_by_enc"]) if row["approved_by_enc"] else "",
+        "approvedAt": row["approved_at"] if "approved_at" in row.keys() else "",
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
@@ -838,6 +839,25 @@ def leave_approvals(conn, year=None):
           CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
           start_date DESC,
           id DESC
+        """,
+        params,
+    ).fetchall()
+    return [leave_request_payload(row) for row in rows]
+
+
+def approved_leave_calendar(conn, year=None):
+    params = []
+    where = "WHERE l.status = 'approved'"
+    if year:
+        where += " AND l.year = ?"
+        params.append(int(year))
+    rows = conn.execute(
+        f"""
+        SELECT l.*, COALESCE(u.department, '') AS department
+        FROM leave_requests l
+        LEFT JOIN users_secure u ON u.id_lookup = l.user_id_lookup
+        {where}
+        ORDER BY start_date DESC, id DESC
         """,
         params,
     ).fetchall()
@@ -1491,7 +1511,7 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     user = current_user(self)
                     query = parse_qs(parsed.query)
                     year = query.get("year", [""])[0] or None
-                    return self.write_json({"requests": leave_approvals(conn, year) if user else [], "holidays": company_holidays(conn, year) if user else []})
+                    return self.write_json({"requests": approved_leave_calendar(conn, year) if user else [], "holidays": company_holidays(conn, year) if user else []})
                 if parsed.path == "/api/login-logs":
                     user = current_user(self)
                     if not user or user.get("role") != "admin":

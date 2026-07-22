@@ -556,12 +556,14 @@ let adminProjects = [];
 let currentView = "dashboard";
 let projectLogPage = 1;
 const PROJECT_LOG_PAGE_SIZE = 10;
+const UI_SESSION_STATE_KEY = "agencyflow.ui.state";
 let selectedId = null;
 let loginUser = "";
 let currentUser = null;
 let vacationCursor = { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
 let vacationWeekAnchor = todayDate();
 let editingCompanyHolidayId = "";
+let selectedLeaveUserId = "";
 let selectedVacationLeaveUserId = "";
 const KOREA_PUBLIC_HOLIDAYS = [
   { date: "2026-01-01", title: "신정" },
@@ -1201,6 +1203,56 @@ function canAccessView(view) {
   return true;
 }
 
+function activateViewPanel(view) {
+  document.querySelectorAll(".view").forEach((panel) => panel.classList.remove("active"));
+  $(`${view}View`)?.classList.add("active");
+  document.querySelectorAll(".nav-item").forEach((item) => {
+    if (item.classList.contains("nav-parent")) {
+      item.classList.remove("active");
+      return;
+    }
+    item.classList.toggle("active", item.dataset.view === view);
+  });
+}
+
+function saveUiSessionState() {
+  try {
+    sessionStorage.setItem(
+      UI_SESSION_STATE_KEY,
+      JSON.stringify({
+        view: currentView,
+        selectedId,
+        detailOpen: document.body.classList.contains("detail-open"),
+        scheduleDetailOpen: document.body.classList.contains("schedule-detail-open"),
+      })
+    );
+  } catch (error) {
+    console.warn("UI state could not be saved.", error);
+  }
+}
+
+function restoreUiSessionState() {
+  let state = null;
+  try {
+    state = JSON.parse(sessionStorage.getItem(UI_SESSION_STATE_KEY) || "null");
+  } catch (error) {
+    state = null;
+  }
+  const view = state?.view && canAccessView(state.view) ? state.view : "dashboard";
+  currentView = view;
+
+  const visibleProjects = accessibleProjects();
+  const restoredProject = visibleProjects.find((project) => project.id === state?.selectedId);
+  selectedId = restoredProject?.id || visibleProjects[0]?.id || null;
+
+  document.body.classList.remove("detail-open", "schedule-detail-open");
+  if (state?.detailOpen && restoredProject) {
+    document.body.classList.add("detail-open");
+    if (state?.scheduleDetailOpen) document.body.classList.add("schedule-detail-open");
+  }
+  activateViewPanel(currentView);
+}
+
 function updateNavAccess() {
   document.querySelectorAll(".admin-only").forEach((item) => {
     item.classList.toggle("hidden", !isAdmin());
@@ -1353,16 +1405,9 @@ function switchView(view) {
   if (view !== "projects") cancelCreateProject();
   currentView = view;
   document.body.classList.remove("detail-open", "schedule-detail-open");
-  document.querySelectorAll(".view").forEach((panel) => panel.classList.remove("active"));
-  $(`${view}View`)?.classList.add("active");
-  document.querySelectorAll(".nav-item").forEach((item) => {
-    if (item.classList.contains("nav-parent")) {
-      item.classList.remove("active");
-      return;
-    }
-    item.classList.toggle("active", item.dataset.view === view);
-  });
+  activateViewPanel(view);
   renderAll(false);
+  saveUiSessionState();
 }
 
 function projectDisplayStatus(project) {
@@ -2208,6 +2253,7 @@ function renderRows() {
       document.body.classList.add("detail-open");
       closeDetailDropdowns();
       renderAll(false);
+      saveUiSessionState();
     });
   });
 
@@ -2343,6 +2389,7 @@ function renderMonthlyRows() {
       document.body.classList.add("detail-open");
       closeDetailDropdowns();
       renderDetail();
+      saveUiSessionState();
       tbody.querySelectorAll("tr[data-monthly-id]").forEach((item) => {
         item.classList.toggle("selected", item.dataset.monthlyId === selectedId);
       });
@@ -3006,15 +3053,7 @@ function addProject() {
 
   if (currentView !== "projects") {
     currentView = "projects";
-    document.querySelectorAll(".view").forEach((panel) => panel.classList.remove("active"));
-    $("projectsView")?.classList.add("active");
-    document.querySelectorAll(".nav-item").forEach((item) => {
-      if (item.classList.contains("nav-parent")) {
-        item.classList.remove("active");
-        return;
-      }
-      item.classList.toggle("active", item.dataset.view === "projects");
-    });
+    activateViewPanel("projects");
   }
 
   document.body.classList.remove("schedule-detail-open");
@@ -3022,6 +3061,7 @@ function addProject() {
   openDetailDropdowns();
   renderRows();
   renderDetail();
+  saveUiSessionState();
   $("projectNo")?.focus();
 }
 
@@ -3044,7 +3084,9 @@ function deleteSelectedProject() {
   document.body.classList.remove("detail-open", "schedule-detail-open");
   void persist();
   renderFilters();
+  activateViewPanel(currentView);
   renderAll();
+  saveUiSessionState();
   syncProjectsPersistSnapshot(projects);
   if (isAdmin()) void refreshLoginLogs();
   if (currentUser) void refreshProjectLogs();
@@ -3595,10 +3637,15 @@ function approvalBadgeClass(status) {
   return status === "활성화" ? "approved" : "rejected";
 }
 
+function employmentStatusLabel(status) {
+  return status === "활성화" ? "재직" : "퇴사";
+}
+
 function closeDetail() {
   cancelCreateProject();
   document.body.classList.remove("detail-open", "schedule-detail-open");
   renderAll(false);
+  saveUiSessionState();
 }
 
 function openProjectDetailOnScheduleView(projectId) {
@@ -3610,6 +3657,7 @@ function openProjectDetailOnScheduleView(projectId) {
   closeDetailDropdowns();
   renderDetail();
   openProjectScheduleDropdown();
+  saveUiSessionState();
   return true;
 }
 
@@ -3622,21 +3670,14 @@ function openProjectDetailFromSchedule(entryId) {
   selectedId = project.id;
   if (currentView !== "projects") {
     currentView = "projects";
-    document.querySelectorAll(".view").forEach((panel) => panel.classList.remove("active"));
-    $("projectsView")?.classList.add("active");
-    document.querySelectorAll(".nav-item").forEach((item) => {
-      if (item.classList.contains("nav-parent")) {
-        item.classList.remove("active");
-        return;
-      }
-      item.classList.toggle("active", item.dataset.view === "projects");
-    });
+    activateViewPanel("projects");
   }
   document.body.classList.remove("schedule-detail-open");
   document.body.classList.add("detail-open");
   closeDetailDropdowns();
   renderAll(false);
   openProjectScheduleDropdown();
+  saveUiSessionState();
   return true;
 }
 
@@ -3689,6 +3730,18 @@ async function submitStatusChange(event) {
 }
 
 
+async function refreshMemberManagementData() {
+  if (!isAdmin()) return;
+  try {
+    if (typeof projectRepository?.refreshDepartments === "function") await projectRepository.refreshDepartments();
+    if (typeof projectRepository?.refreshUsers === "function") await projectRepository.refreshUsers();
+    renderBasicManagement();
+  } catch (error) {
+    console.error(error);
+    renderBasicManagement();
+  }
+}
+
 function renderBasicManagement() {
   if (!isAdmin()) return;
   const users = typeof projectRepository?.getUsers === "function" ? projectRepository.getUsers() : [];
@@ -3714,7 +3767,7 @@ function renderBasicManagement() {
       <td>${escapeHtml(formatLeaveDays(user.leaveTotalDays || 0))}</td>
       <td>${escapeHtml(formatLeaveDays(user.leaveRemainingDays || 0))}</td>
       <td><span class="role-badge ${isUserAdmin ? "admin" : "user"}">${isUserAdmin ? "관리자" : "일반"}</span></td>
-      <td><span class="status-badge ${approvalBadgeClass(approval)}">${escapeHtml(approval)}</span></td>
+      <td><span class="status-badge ${approvalBadgeClass(approval)}">${escapeHtml(employmentStatusLabel(approval))}</span></td>
     </tr>`;
       })
       .join("") || '<tr><td colspan="7" class="empty-cell">조회된 회원이 없습니다.</td></tr>';
@@ -3752,8 +3805,8 @@ function renderDepartments() {
   if (!rows) return;
   rows.innerHTML =
     departments
-      .map((department) => `<tr>
-      <td>${escapeHtml(department.name || "-")}</td>
+      .map((department) => `<tr class="department-row" data-department-members="${escapeAttr(department.name || "")}">
+      <td><button class="department-link-btn" type="button">${escapeHtml(department.name || "-")}</button></td>
       <td><input class="department-color-input" data-department-color="${escapeAttr(department.id)}" type="color" value="${escapeAttr(normalizeColorValue(department.color))}" aria-label="${escapeAttr(department.name || "부서")} 색상" /></td>
       <td>${Number(department.userCount || 0).toLocaleString("ko-KR")}</td>
       <td>${escapeHtml(department.createdAt || "-")}</td>
@@ -3763,6 +3816,12 @@ function renderDepartments() {
       </td>
     </tr>`)
       .join("") || '<tr><td colspan="5" class="empty-cell">등록된 부서가 없습니다.</td></tr>';
+  rows.onclick = (event) => {
+    const row = event.target.closest("[data-department-members]");
+    if (!row || !rows.contains(row)) return;
+    if (event.target.closest("[data-department-color], [data-department-edit], [data-department-delete]")) return;
+    openMembersByDepartment(row.dataset.departmentMembers);
+  };
   rows.querySelectorAll("[data-department-color]").forEach((input) => {
     input.addEventListener("change", () => changeDepartmentColor(input.dataset.departmentColor, input.value));
   });
@@ -3772,6 +3831,16 @@ function renderDepartments() {
   rows.querySelectorAll("[data-department-delete]").forEach((button) => {
     button.addEventListener("click", () => removeDepartment(button.dataset.departmentDelete));
   });
+}
+
+function openMembersByDepartment(departmentName) {
+  if (!isAdmin()) return;
+  const department = String(departmentName || "");
+  switchView("members");
+  renderMemberDepartmentFilter();
+  setValue("memberDepartmentFilter", department);
+  setValue("memberSearchInput", "");
+  renderBasicManagement();
 }
 
 async function refreshDepartments() {
@@ -3854,6 +3923,13 @@ function leaveStatusClass(status) {
   return "pending";
 }
 
+function isCurrentMonthText(value) {
+  const text = String(value || "").slice(0, 7);
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  return text === currentMonth;
+}
+
 function formatLeaveDays(days) {
   const value = Number(days) || 0;
   return `${value.toLocaleString("ko-KR", { maximumFractionDigits: 1 })}일`;
@@ -3898,9 +3974,10 @@ function renderLeaveApprovals() {
   const requests = projectRepository.getLeaveApprovals();
   const pending = requests.filter((request) => request.status === "대기");
   const approved = requests.filter((request) => request.status === "승인");
+  const approvedThisMonth = approved.filter((request) => isCurrentMonthText(request.approvedAt || request.updatedAt));
   const rejected = requests.filter((request) => request.status === "반려");
   setText("leavePendingCount", pending.length.toLocaleString("ko-KR"));
-  setText("leaveApprovedCount", approved.length.toLocaleString("ko-KR"));
+  setText("leaveApprovedCount", approvedThisMonth.length.toLocaleString("ko-KR"));
   setText("leaveRejectedCount", rejected.length.toLocaleString("ko-KR"));
 
   const rows = $("leaveApprovalRows");
@@ -3957,18 +4034,73 @@ async function refreshLeaveApprovals() {
   }
 }
 
-function openLeaveDialog() {
+function leaveActiveUsers() {
+  return projectRepository
+    .getUsers()
+    .filter((user) => user.approvalStatus === "활성화")
+    .sort((a, b) => String(a.name || a.id || "").localeCompare(String(b.name || b.id || ""), "ko"));
+}
+
+function selectedLeaveUser() {
+  return leaveActiveUsers().find((user) => user.id === selectedLeaveUserId) || null;
+}
+
+function renderLeaveUserResults() {
+  const box = $("leaveUserResults");
+  if (!box) return;
+  const query = String(valueOf("leaveUserSearch") || "").trim().toLowerCase();
+  if (!query) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  const rows = leaveActiveUsers()
+    .filter((user) => [user.id, user.name, user.department].join(" ").toLowerCase().includes(query))
+    .slice(0, 10);
+  box.hidden = false;
+  if (!rows.length) {
+    box.innerHTML = '<div class="schedule-project-result is-empty" role="presentation">검색 결과가 없습니다.</div>';
+    return;
+  }
+  box.innerHTML = rows
+    .map(
+      (user) => `<button type="button" class="schedule-project-result" data-leave-user-id="${escapeAttr(user.id)}">
+        <span class="schedule-project-result-no">${escapeHtml(user.department || "-")}</span>
+        <span class="schedule-project-result-name">${escapeHtml(user.name || user.id)} (${escapeHtml(user.id)})</span>
+      </button>`
+    )
+    .join("");
+  box.querySelectorAll("[data-leave-user-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const user = leaveActiveUsers().find((item) => item.id === button.dataset.leaveUserId);
+      if (!user) return;
+      selectedLeaveUserId = user.id;
+      setValue("leaveUserId", user.id);
+      setValue("leaveUserSearch", `${user.name || user.id} (${user.id})`);
+      box.hidden = true;
+      box.innerHTML = "";
+    });
+  });
+}
+
+async function openLeaveDialog() {
   if (!currentUser) return;
   const today = new Date().toISOString().slice(0, 10);
   const leaveUserField = $("leaveUserField");
-  const leaveUserSelect = $("leaveUserId");
   leaveUserField?.classList.toggle("hidden", !isAdmin());
-  if (isAdmin() && leaveUserSelect) {
-    const users = projectRepository.getUsers().filter((user) => user.approvalStatus === "활성화");
-    leaveUserSelect.innerHTML = users
-      .map((user) => `<option value="${escapeAttr(user.id)}">${escapeHtml(user.name || user.id)} (${escapeHtml(user.id)})</option>`)
-      .join("");
-    if (users.some((user) => user.id === "demo")) leaveUserSelect.value = "demo";
+  if (isAdmin()) {
+    try {
+      if (!projectRepository.getUsers().length) await projectRepository.refreshUsers();
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  selectedLeaveUserId = "";
+  setValue("leaveUserSearch", "");
+  setValue("leaveUserId", "");
+  if ($("leaveUserResults")) {
+    $("leaveUserResults").hidden = true;
+    $("leaveUserResults").innerHTML = "";
   }
   setValue("leaveStartDate", today);
   setValue("leaveEndDate", today);
@@ -3980,6 +4112,8 @@ function openLeaveDialog() {
 }
 
 function closeLeaveDialog() {
+  selectedLeaveUserId = "";
+  $("leaveUserResults") && ($("leaveUserResults").hidden = true);
   $("leaveDialog")?.close();
 }
 
@@ -4010,7 +4144,13 @@ async function submitLeaveForm(event) {
     days: Number(valueOf("leaveDays")),
     reason: valueOf("leaveReason").trim(),
   };
-  if (isAdmin()) payload.userId = valueOf("leaveUserId") || currentUser.id;
+  if (isAdmin()) {
+    payload.userId = valueOf("leaveUserId") || selectedLeaveUserId;
+    if (!payload.userId || !selectedLeaveUser()) {
+      setText("leaveMessage", "회원을 검색해서 선택해 주세요.");
+      return;
+    }
+  }
   if (!payload.startDate || !payload.endDate || !payload.days) {
     setText("leaveMessage", "연차 정보를 입력해 주세요.");
     return;
@@ -4063,6 +4203,8 @@ function datesBetween(startDate, endDate) {
 function filteredVacationRequests() {
   const query = vacationSearchQuery();
   return projectRepository.getVacationSchedule().filter((request) => {
+    const approved = request.status === "승인" || request.statusCode === "approved";
+    if (!approved) return false;
     if (!query) return true;
     return [request.department, request.userName, request.userId, request.type, request.reason]
       .join(" ")
@@ -4286,10 +4428,6 @@ function moveVacationList(amount) {
   renderVacationSchedule();
 }
 
-function vacationLeaveDaysByType(type) {
-  return String(type || "").includes("반차") ? 0.5 : 1;
-}
-
 function vacationLeaveActiveUsers() {
   return projectRepository
     .getUsers()
@@ -4346,11 +4484,14 @@ async function openVacationLeaveDialog() {
   } catch (error) {
     console.error(error);
   }
+  const today = todayDate();
   selectedVacationLeaveUserId = "";
   setValue("vacationLeaveUserSearch", "");
   setValue("vacationLeaveUserId", "");
-  setValue("vacationLeaveDate", todayDate());
+  setValue("vacationLeaveStartDate", today);
+  setValue("vacationLeaveEndDate", today);
   setValue("vacationLeaveType", "연차");
+  setValue("vacationLeaveDays", "1");
   setValue("vacationLeaveMemo", "");
   setText("vacationLeaveMessage", "");
   if ($("vacationLeaveUserResults")) {
@@ -4366,23 +4507,42 @@ function closeVacationLeaveDialog() {
   $("vacationLeaveDialog")?.close();
 }
 
+function updateVacationLeaveDaysFromDates() {
+  const type = valueOf("vacationLeaveType");
+  if (type.includes("반차")) {
+    setValue("vacationLeaveDays", "0.5");
+    setValue("vacationLeaveEndDate", valueOf("vacationLeaveStartDate"));
+    return;
+  }
+  const start = new Date(valueOf("vacationLeaveStartDate"));
+  const end = new Date(valueOf("vacationLeaveEndDate"));
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+    setValue("vacationLeaveDays", "1");
+    return;
+  }
+  const diff = Math.floor((end - start) / (24 * 60 * 60 * 1000)) + 1;
+  setValue("vacationLeaveDays", String(Math.max(1, diff)));
+}
+
 async function submitVacationLeaveForm(event) {
   event.preventDefault();
   if (!isAdmin()) return;
   const userId = valueOf("vacationLeaveUserId") || selectedVacationLeaveUserId;
-  const date = valueOf("vacationLeaveDate");
+  const startDate = valueOf("vacationLeaveStartDate");
+  const endDate = valueOf("vacationLeaveEndDate") || startDate;
   const type = valueOf("vacationLeaveType") || "연차";
+  const days = Number(valueOf("vacationLeaveDays"));
   const user = selectedVacationLeaveUser();
-  if (!userId || !date || !type || !user) {
-    setText("vacationLeaveMessage", "회원, 날짜, 구분을 선택해 주세요.");
+  if (!userId || !startDate || !endDate || !type || !days || !user) {
+    setText("vacationLeaveMessage", "회원, 시작일, 종료일, 구분을 선택해 주세요.");
     return;
   }
   const payload = {
     userId,
-    startDate: date,
-    endDate: date,
+    startDate,
+    endDate,
     type,
-    days: vacationLeaveDaysByType(type),
+    days,
     reason: valueOf("vacationLeaveMemo").trim(),
     autoApprove: true,
   };
@@ -4394,7 +4554,7 @@ async function submitVacationLeaveForm(event) {
     if (currentView === "leaveApprovals") await refreshLeaveApprovals();
     if (currentView === "leaveManagement") await refreshLeaves();
     renderVacationSchedule();
-    renderMembers();
+    renderBasicManagement();
   } catch (error) {
     console.error(error);
     setText("vacationLeaveMessage", error.message || "연차 등록 중 오류가 발생했습니다.");
@@ -4534,6 +4694,7 @@ function renderIssueProjectRows() {
       document.body.classList.add("detail-open");
       closeDetailDropdowns();
       renderDetail();
+      saveUiSessionState();
       tbody.querySelectorAll("tr[data-issue-project-id]").forEach((item) => {
         item.classList.toggle("selected", item.dataset.issueProjectId === selectedId);
       });
@@ -4874,6 +5035,7 @@ function showScheduleProjectDetail(entry) {
   openDetailDropdowns();
   renderDetail();
   openProjectScheduleDropdown();
+  saveUiSessionState();
 }
 
 function renderScheduleProjectResults() {
@@ -5269,8 +5431,7 @@ document.querySelectorAll("[data-view]").forEach((button) => {
     }
     switchView(button.dataset.view);
     if (button.dataset.view === "members") {
-      refreshDepartments();
-      projectRepository.refreshUsers?.().then(() => renderBasicManagement()).catch(console.error);
+      void refreshMemberManagementData();
     }
     if (button.dataset.view === "loginLogs") refreshLoginLogs();
     if (button.dataset.view === "departments") refreshDepartments();
@@ -5471,8 +5632,16 @@ on("closeMemberDialog", "click", closeMemberDialog);
 on("addLeaveRequestBtn", "click", openLeaveDialog);
 on("leaveForm", "submit", submitLeaveForm);
 on("closeLeaveDialog", "click", closeLeaveDialog);
+on("leaveUserSearch", "input", () => {
+  selectedLeaveUserId = "";
+  setValue("leaveUserId", "");
+  renderLeaveUserResults();
+});
 ["leaveStartDate", "leaveEndDate", "leaveType"].forEach((id) => {
   on(id, "change", updateLeaveDaysFromDates);
+});
+["vacationLeaveStartDate", "vacationLeaveEndDate", "vacationLeaveType"].forEach((id) => {
+  on(id, "change", updateVacationLeaveDaysFromDates);
 });
 on("vacationPrevMonth", "click", () => moveVacationMonth(-1));
 on("vacationNextMonth", "click", () => moveVacationMonth(1));
@@ -5482,6 +5651,30 @@ on("vacationCalendarMonth", "change", renderVacationCalendarGrid);
 on("vacationCalendarWeek", "change", renderVacationCalendarGrid);
 on("statusForm", "submit", submitStatusChange);
 on("closeStatus", "click", () => $("statusDialog")?.close());
+
+async function hydrateRestoredViewData() {
+  try {
+    if (currentView === "vacationSchedule" && currentUser) {
+      if (isAdmin() && typeof projectRepository?.refreshDepartments === "function") await projectRepository.refreshDepartments();
+      if (typeof projectRepository?.refreshVacationSchedule === "function") await projectRepository.refreshVacationSchedule();
+    }
+    if (currentView === "leaveApprovals" && isAdmin() && typeof projectRepository?.refreshLeaveApprovals === "function") {
+      await projectRepository.refreshLeaveApprovals();
+    }
+    if (currentView === "departments" && isAdmin() && typeof projectRepository?.refreshDepartments === "function") {
+      await projectRepository.refreshDepartments();
+    }
+    if (currentView === "members" && isAdmin()) {
+      if (typeof projectRepository?.refreshDepartments === "function") await projectRepository.refreshDepartments();
+      if (typeof projectRepository?.refreshUsers === "function") await projectRepository.refreshUsers();
+    }
+    if (currentView === "loginLogs" && isAdmin() && typeof projectRepository?.refreshLoginLogs === "function") {
+      await projectRepository.refreshLoginLogs();
+    }
+  } catch (error) {
+    console.error(error);
+  }
+}
 
 async function initializeApp() {
   if (!projectRepository) {
@@ -5495,10 +5688,12 @@ async function initializeApp() {
   mergeAdminFields();
   restoreLogin();
   selectedId = accessibleProjects()[0]?.id || null;
+  restoreUiSessionState();
   if (!loginUser && projectRepository.mode === "private") {
     await applyDatasetMode("public");
     return;
   }
+  await hydrateRestoredViewData();
   renderAll();
   syncProjectsPersistSnapshot(projects);
 }

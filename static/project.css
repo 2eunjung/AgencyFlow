@@ -2494,6 +2494,34 @@ body.auth-locked .login-dialog::backdrop {
   max-width: none;
 }
 
+#leaveDialog .login-body label,
+#vacationLeaveDialog .login-body label,
+#companyHolidayDialog .login-body label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+#leaveDialog .leave-dialog-row,
+#vacationLeaveDialog .leave-dialog-row,
+#companyHolidayDialog .leave-dialog-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+#leaveDialog .leave-dialog-row .member-dialog-select,
+#leaveDialog .leave-dialog-row input,
+#vacationLeaveDialog .leave-dialog-row .member-dialog-select,
+#vacationLeaveDialog .leave-dialog-row input,
+#companyHolidayDialog .leave-dialog-row .member-dialog-select,
+#companyHolidayDialog .leave-dialog-row input {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
 .management-form {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2794,6 +2822,28 @@ body.detail-open .issue-projects-table tbody tr.selected {
 
 .schedule-add-btn:hover {
   background: var(--soft);
+}
+
+.schedule-add-btn-solid {
+  border-color: var(--accent-dark);
+  background: var(--accent);
+  color: #fff;
+}
+
+.schedule-add-btn-solid:hover {
+  background: var(--accent-dark);
+  color: #fff;
+}
+
+.schedule-add-btn-soft {
+  border-color: rgba(47, 125, 103, 0.28);
+  background: #e8f3ef;
+  color: var(--accent);
+}
+
+.schedule-add-btn-soft:hover {
+  background: #dceee7;
+  color: var(--accent-dark);
 }
 
 .schedule-nav-btn {
@@ -3426,4 +3476,34 @@ body.detail-open .issue-projects-table tbody tr.selected {
 
 .schedule-dialog-actions .primary-btn {
   margin-left: auto;
+}
+
+.department-link-btn {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+  text-align: left;
+}
+
+.department-link-btn:hover,
+.department-link-btn:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+  outline: none;
+}
+
+.department-row {
+  cursor: pointer;
+}
+
+.department-row .department-color-input,
+.department-row .ghost-btn {
+  cursor: auto;
 }

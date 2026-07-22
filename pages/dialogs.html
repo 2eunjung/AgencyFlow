@@ -33,10 +33,12 @@
             <span>비밀번호 확인</span>
             <input id="memberPasswordConfirm" type="password" autocomplete="new-password" placeholder="비밀번호 확인" />
           </label>
-          <label>이름<input id="memberName" autocomplete="off" placeholder="이름" /></label>
-          <label>부서
-            <select id="memberDepartment" class="member-dialog-select"></select>
-          </label>
+          <div class="member-inline-fields">
+            <label>부서
+              <select id="memberDepartment" class="member-dialog-select"></select>
+            </label>
+            <label>이름<input id="memberName" autocomplete="off" placeholder="이름" /></label>
+          </div>
           <div class="member-inline-fields">
             <label>권한
               <select id="memberRole" class="member-dialog-select">
@@ -44,10 +46,10 @@
                 <option value="admin">관리자</option>
               </select>
             </label>
-            <label>계정 상태
+            <label>재직 여부
               <select id="memberApproval" class="member-dialog-select">
-                <option value="비활성화">비활성화</option>
-                <option value="활성화">활성화</option>
+                <option value="비활성화">퇴사</option>
+                <option value="활성화">재직</option>
               </select>
             </label>
           </div>
@@ -85,16 +87,20 @@
           <button id="closeLeaveDialog" class="icon-btn" aria-label="닫기" type="button">×</button>
         </div>
         <div class="login-body">
-          <label id="leaveUserField" class="hidden">회원
-            <select id="leaveUserId" class="member-dialog-select"></select>
+          <label id="leaveUserField" class="vacation-leave-user-field hidden">이름
+            <input id="leaveUserSearch" type="search" autocomplete="off" placeholder="이름 또는 아이디 검색" />
+            <input id="leaveUserId" type="hidden" />
+            <div id="leaveUserResults" class="schedule-project-results" hidden></div>
           </label>
-          <label>시작일
-            <input id="leaveStartDate" type="date" required />
-          </label>
-          <label>종료일
-            <input id="leaveEndDate" type="date" required />
-          </label>
-          <div class="member-inline-fields">
+          <div class="leave-dialog-row">
+            <label>시작일
+              <input id="leaveStartDate" type="date" required />
+            </label>
+            <label>종료일
+              <input id="leaveEndDate" type="date" required />
+            </label>
+          </div>
+          <div class="leave-dialog-row">
             <label>구분
               <select id="leaveType" class="member-dialog-select">
                 <option value="연차">연차</option>
@@ -201,21 +207,31 @@
             <input id="vacationLeaveUserId" type="hidden" />
             <div id="vacationLeaveUserResults" class="schedule-project-results" hidden></div>
           </label>
-          <label>날짜
-            <input id="vacationLeaveDate" type="date" required />
+          <div class="leave-dialog-row">
+            <label>시작일
+              <input id="vacationLeaveStartDate" type="date" required />
+            </label>
+            <label>종료일
+              <input id="vacationLeaveEndDate" type="date" required />
+            </label>
+          </div>
+          <div class="leave-dialog-row">
+            <label>구분
+              <select id="vacationLeaveType" class="member-dialog-select" required>
+                <option value="연차">연차</option>
+                <option value="오전 반차">오전 반차</option>
+                <option value="오후 반차">오후 반차</option>
+                <option value="경조사">경조사</option>
+              </select>
+            </label>
+            <label>차감 일수
+              <input id="vacationLeaveDays" type="number" min="0.5" max="30" step="0.5" value="1" required />
+            </label>
+          </div>
+          <label>사유
+            <input id="vacationLeaveMemo" type="text" autocomplete="off" maxlength="120" placeholder="연차 사유" />
           </label>
-          <label>구분
-            <select id="vacationLeaveType" class="member-dialog-select" required>
-              <option value="연차">연차</option>
-              <option value="오전 반차">오전 반차</option>
-              <option value="오후 반차">오후 반차</option>
-              <option value="경조사">경조사</option>
-            </select>
-          </label>
-          <label>메모
-            <input id="vacationLeaveMemo" type="text" autocomplete="off" maxlength="120" placeholder="간단 메모" />
-          </label>
-          <button class="primary-btn" type="submit">저장</button>
+          <button class="primary-btn" type="submit">등록</button>
           <p id="vacationLeaveMessage"></p>
         </div>
       </form>
@@ -230,16 +246,18 @@
           <button id="closeCompanyHolidayDialog" class="icon-btn" aria-label="닫기" type="button">&times;</button>
         </div>
         <div class="login-body">
-          <label>휴일 일자
-            <input id="companyHolidayDialogDate" type="date" required />
-          </label>
-          <label>휴일 구분
-            <select id="companyHolidayDialogKind" class="member-dialog-select">
-              <option value="회사휴일">회사휴일</option>
-              <option value="대체공휴일">대체공휴일</option>
-              <option value="국가공휴일">국가공휴일</option>
-            </select>
-          </label>
+          <div class="leave-dialog-row">
+            <label>휴일 구분
+              <select id="companyHolidayDialogKind" class="member-dialog-select">
+                <option value="회사휴일">회사휴일</option>
+                <option value="대체공휴일">대체공휴일</option>
+                <option value="국가공휴일">국가공휴일</option>
+              </select>
+            </label>
+            <label>휴일 일자
+              <input id="companyHolidayDialogDate" type="date" required />
+            </label>
+          </div>
           <label>휴일명
             <input id="companyHolidayDialogName" type="text" autocomplete="off" maxlength="80" placeholder="휴일명" required />
           </label>
