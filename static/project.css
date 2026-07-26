@@ -527,6 +527,10 @@ h3 {
   max-width: 360px;
 }
 
+.assignment-filters {
+  grid-template-columns: minmax(240px, 1fr) repeat(4, minmax(150px, 190px));
+}
+
 .department-color-input {
   width: 44px;
   height: 32px;
@@ -2487,6 +2491,10 @@ body.auth-locked .login-dialog::backdrop {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+#memberDialog .member-full-field {
+  width: 100%;
 }
 
 #memberDialog .member-inline-fields .member-dialog-select {

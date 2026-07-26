@@ -305,7 +305,7 @@ class SQLiteProjectRepository {
   }
 
   normalizeUser(user) {
-    const role = user?.role === "admin" ? "admin" : "user";
+    const role = ["admin", "team_lead", "user"].includes(user?.role) ? user.role : "user";
     return {
       id: String(user?.id || "").trim(),
       password: String(user?.password || ""),
@@ -313,6 +313,9 @@ class SQLiteProjectRepository {
       role,
       approvalStatus: this.normalizeApprovalStatus(user?.approvalStatus, role),
       department: String(user?.department || "").trim(),
+      position: String(user?.position || "").trim(),
+      hireDate: String(user?.hireDate || "").trim(),
+      resignDate: String(user?.resignDate || "").trim(),
     };
   }
 
@@ -428,6 +431,7 @@ class SQLiteProjectRepository {
     const result = await this.api("/leave-calendar");
     this.vacationScheduleCache = this.clone(result.requests || []);
     this.companyHolidaysCache = this.clone(result.holidays || []);
+    if (result.departments) this.departmentsCache = this.clone(result.departments || []);
     return this.getVacationSchedule();
   }
 
@@ -498,10 +502,10 @@ class SQLiteProjectRepository {
     return { ok: true };
   }
 
-  async createUser({ id, password, name, role = "user", approvalStatus = "비활성화", department = "" }) {
+  async createUser({ id, password, name, role = "user", approvalStatus = "비활성화", department = "", position = "", hireDate = "", resignDate = "" }) {
     const result = await this.api("/users", {
       method: "POST",
-      body: JSON.stringify({ id, password, name, role, approvalStatus, department }),
+      body: JSON.stringify({ id, password, name, role, approvalStatus, department, position, hireDate, resignDate }),
     });
     this.usersCache = this.clone(result.users || this.usersCache);
     return result;
@@ -539,6 +543,10 @@ class SQLiteProjectRepository {
       name: normalized.name,
       role: normalized.role,
       approvalStatus: normalized.approvalStatus,
+      department: normalized.department,
+      position: normalized.position,
+      hireDate: normalized.hireDate,
+      resignDate: normalized.resignDate,
     };
   }
 
@@ -649,6 +657,7 @@ const editableFields = [
   "intranetUrl",
   "designUrl",
 ];
+const projectStaffFields = ["pm", "designer", "publisher", "programmer"];
 let quoteUploadProjectId = "";
 let editingShortcutProjectId = "";
 let editingShortcutField = "shortcutUrl";
@@ -690,6 +699,10 @@ function normalizeProject(project) {
     clientContacts,
     communications,
     schedules: (project.schedules || []).map((entry) => normalizeScheduleEntry(project, entry)),
+    pmId: project.pmId || "",
+    designerId: project.designerId || "",
+    publisherId: project.publisherId || "",
+    programmerId: project.programmerId || "",
     monthlyCollection: Boolean(project.monthlyCollection),
     hasLanding: Boolean(project.hasLanding),
     hasIssue: Boolean(project.hasIssue),
@@ -707,6 +720,9 @@ function normalizeScheduleEntry(project, entry) {
     ...entry,
     staffRole: entry?.staffRole || fallbackStaff.staffRole,
     staffName: entry?.staffName || legacyStaffName || fallbackStaff.staffName,
+    createdById: entry?.createdById || "",
+    createdByName: entry?.createdByName || "",
+    createdAt: entry?.createdAt || "",
     completed: Boolean(entry?.completed),
   };
 }
@@ -1069,11 +1085,15 @@ function createEmptyProject() {
     balance: "",
     industry: "",
     pm: "",
+    pmId: "",
     depositDate: "",
     milestone: "",
     designer: "",
+    designerId: "",
     publisher: "",
+    publisherId: "",
     programmer: "",
+    programmerId: "",
     quoteFileName: "",
     quoteFileData: "",
     shortcutUrl: "",
@@ -1127,6 +1147,16 @@ function isAdmin() {
   return currentUser?.role === "admin";
 }
 
+function roleLabel(role) {
+  if (role === "admin") return "관리자";
+  if (role === "team_lead") return "팀장";
+  return "일반";
+}
+
+function roleBadgeClass(role) {
+  return role === "admin" ? "admin" : "user";
+}
+
 function currentDepartment() {
   return String(currentUser?.department || "").trim().toLowerCase();
 }
@@ -1149,7 +1179,7 @@ function isDepartment(...names) {
 }
 
 function canViewAllProjects() {
-  return isAdmin() || isDepartment("경영관리", "영업", "유지보수");
+  return isAdmin() || isDepartment("경영관리", "영업", "pm");
 }
 
 function canCreateProject() {
@@ -1168,17 +1198,96 @@ function canViewAllProjectSchedules() {
   return isAdmin() || isDepartment("pm");
 }
 
+function isProjectWorkerDepartment() {
+  return isDepartment("디자인", "디자이너", "퍼블리싱", "퍼블리셔", "프로그램", "프로그래머");
+}
+
+function canCreateProjectSchedule(project = null) {
+  if (!currentUser) return false;
+  if (canViewAllProjectSchedules()) return true;
+  return Boolean(project && isProjectWorkerDepartment() && isAssignedProject(project));
+}
+
+function scheduleEntryOwnedByCurrentUser(entry) {
+  if (!currentUser || !entry) return false;
+  const userId = assignedProjectUserId().toLowerCase();
+  const userName = assignedProjectUserName().toLowerCase();
+  const ownerId = String(entry.createdById || "").trim().toLowerCase();
+  const ownerName = String(entry.createdByName || "").trim().toLowerCase();
+  const staffName = String(entry.staffName || "").trim().toLowerCase();
+  return Boolean((userId && ownerId === userId) || (userName && (ownerName === userName || (!ownerId && staffName === userName))));
+}
+
+function canViewProjectScheduleEntry(entry) {
+  if (!currentUser) return false;
+  if (canViewAllProjectSchedules()) return true;
+  if (isProjectWorkerDepartment()) return scheduleEntryOwnedByCurrentUser(entry);
+  return false;
+}
+
+function canManageProjectScheduleEntry(project, entry = null) {
+  if (!currentUser) return false;
+  if (canViewAllProjectSchedules()) return true;
+  if (!project || !isProjectWorkerDepartment() || !isAssignedProject(project)) return false;
+  return entry ? scheduleEntryOwnedByCurrentUser(entry) : true;
+}
+
+function canViewDashboardProjectMetrics() {
+  return isAdmin() || isDepartment("pm");
+}
+
 function assignedProjectUserName() {
   return String(currentUser?.name || "").trim();
 }
 
+function assignedProjectUserId() {
+  return String(currentUser?.id || "").trim();
+}
+
+function projectStaffMatches(project, nameField, idField) {
+  const userId = assignedProjectUserId().toLowerCase();
+  const userName = assignedProjectUserName().toLowerCase();
+  const assignedId = String(project?.[idField] || "").trim().toLowerCase();
+  const assignedName = String(project?.[nameField] || "").trim().toLowerCase();
+  return Boolean((userId && assignedId === userId) || (userName && assignedName === userName));
+}
+
+const PROJECT_STAFF_ASSIGNMENTS = [
+  { nameField: "pm", idField: "pmId", departments: ["pm"] },
+  { nameField: "designer", idField: "designerId", departments: ["디자인", "디자이너"] },
+  { nameField: "publisher", idField: "publisherId", departments: ["퍼블리싱", "퍼블리셔"] },
+  { nameField: "programmer", idField: "programmerId", departments: ["프로그램", "프로그래머"] },
+];
+
+function userMatchesAnyDepartment(user, departments) {
+  const department = normalizeDepartmentKey(user?.department || "");
+  return departments.map((name) => normalizeDepartmentKey(name)).includes(department);
+}
+
+function findStaffUserByName(name, departments) {
+  const value = String(name || "").trim().toLowerCase();
+  if (!value) return null;
+  const users = projectRepository.getUsers?.() || [];
+  return (
+    users.find((user) => String(user.name || "").trim().toLowerCase() === value && userMatchesAnyDepartment(user, departments)) ||
+    (String(currentUser?.name || "").trim().toLowerCase() === value && userMatchesAnyDepartment(currentUser, departments) ? currentUser : null)
+  );
+}
+
+function applyProjectStaffIds(project) {
+  PROJECT_STAFF_ASSIGNMENTS.forEach(({ nameField, idField, departments }) => {
+    const staff = findStaffUserByName(project[nameField], departments);
+    if (staff?.id) project[idField] = staff.id;
+  });
+  return project;
+}
+
 function isAssignedProject(project) {
-  const userName = assignedProjectUserName();
-  if (!userName) return false;
-  if (isDepartment("디자인", "디자이너")) return String(project.designer || "").trim() === userName;
-  if (isDepartment("퍼블리싱", "퍼블리셔")) return String(project.publisher || "").trim() === userName;
-  if (isDepartment("프로그램", "프로그래머")) return String(project.programmer || "").trim() === userName;
-  if (isDepartment("pm")) return String(project.pm || "").trim() === userName;
+  if (!assignedProjectUserId() && !assignedProjectUserName()) return false;
+  if (isDepartment("디자인", "디자이너")) return projectStaffMatches(project, "designer", "designerId");
+  if (isDepartment("퍼블리싱", "퍼블리셔")) return projectStaffMatches(project, "publisher", "publisherId");
+  if (isDepartment("프로그램", "프로그래머")) return projectStaffMatches(project, "programmer", "programmerId");
+  if (isDepartment("pm")) return projectStaffMatches(project, "pm", "pmId");
   return false;
 }
 
@@ -1219,6 +1328,7 @@ function accessibleProjects() {
 function canAccessView(view) {
   if (view === "members" || view === "departments" || view === "adminSettings" || view === "loginLogs" || view === "projectLogs") return isAdmin();
   if (view === "leaveApprovals") return isAdmin();
+  if (view === "projectCompletionApproval" || view === "projectAssignment") return isAdmin();
   if (view === "monthly" || view === "issues") return canViewMonthlyAndIssues();
   if (view === "leaveManagement") return Boolean(currentUser);
   return true;
@@ -1298,7 +1408,7 @@ function updateNavAccess() {
   document.querySelectorAll('[data-view="monthly"], [data-view="issues"]').forEach((item) => {
     item.classList.toggle("hidden", !canViewMonthlyAndIssues());
   });
-  if (!isAdmin() && (currentView === "members" || currentView === "departments" || currentView === "adminSettings" || currentView === "loginLogs" || currentView === "projectLogs" || currentView === "leaveApprovals")) {
+  if (!isAdmin() && (currentView === "members" || currentView === "departments" || currentView === "adminSettings" || currentView === "loginLogs" || currentView === "projectLogs" || currentView === "leaveApprovals" || currentView === "projectCompletionApproval" || currentView === "projectAssignment")) {
     switchView("dashboard");
   }
   if (!canViewMonthlyAndIssues() && (currentView === "monthly" || currentView === "issues")) switchView("dashboard");
@@ -1651,22 +1761,20 @@ function uniqueStaffNames(field) {
 function renderStaffFilter(id, field, allLabel) {
   const select = $(id);
   if (!select) return;
-  const lockedPm = Boolean(currentUser && !isAdmin() && field === "pm");
-  const current = lockedPm ? currentPmName() : select.value;
-  const names = lockedPm ? (currentPmName() ? [currentPmName()] : []) : uniqueStaffNames(field);
-  select.innerHTML = lockedPm
-    ? names.map((name) => `<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join("")
-    : `<option value="">${escapeHtml(allLabel)}</option>` +
-      names.map((name) => `<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join("");
-  select.value = names.includes(current) ? current : lockedPm ? "" : "";
-  select.disabled = lockedPm;
+  const current = select.value;
+  const names = uniqueStaffNames(field);
+  select.innerHTML =
+    `<option value="">${escapeHtml(allLabel)}</option>` +
+    names.map((name) => `<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join("");
+  select.value = names.includes(current) ? current : "";
+  select.disabled = false;
 }
 
 function filteredProjects() {
   const query = valueOf("searchInput").trim().toLowerCase();
   const milestones = getSelectedMilestoneFilters();
   const statuses = getSelectedStatusFilters();
-  const pm = currentUser && !isAdmin() ? currentPmName() : valueOf("pmFilter").trim();
+  const pm = valueOf("pmFilter").trim();
   const foreignOnly = checkedOf("foreignFilter");
   const landingOnly = checkedOf("landingFilter");
   const designOnly = checkedOf("designFilter");
@@ -1767,7 +1875,9 @@ function renderDashboardScheduleItem(entry) {
 }
 
 function toggleScheduleCompleted(entryId, completed) {
-  if (!requireWritableAction()) return false;
+  const targetProject = projects.find((project) => (project.schedules || []).some((entry) => entry.id === entryId));
+  const targetEntry = targetProject ? (targetProject.schedules || []).find((entry) => entry.id === entryId) : null;
+  if (!canManageProjectScheduleEntry(targetProject, targetEntry)) return false;
   projects.forEach((project) => {
     (project.schedules || []).forEach((entry) => {
       if (entry.id === entryId) entry.completed = Boolean(completed);
@@ -1834,8 +1944,13 @@ function renderDashboard() {
   $("feedbackCount").textContent = progressRows.length.toLocaleString("ko-KR");
   $("monthlyCount").textContent = visible.filter((project) => project.monthlyCollection).length.toLocaleString("ko-KR");
   $("issueCount").textContent = issueProjectCount.toLocaleString("ko-KR");
-  renderStatusChart(progressRows);
-  renderStatusSummary(progressRows);
+  const metricsGrid = $("statusChart")?.closest(".dashboard-grid");
+  const canViewMetrics = canViewDashboardProjectMetrics();
+  if (metricsGrid) metricsGrid.style.display = canViewMetrics ? "" : "none";
+  if (canViewMetrics) {
+    renderStatusChart(progressRows);
+    renderStatusSummary(progressRows);
+  }
   renderDashboardSchedules();
 }
 
@@ -2467,6 +2582,8 @@ function applyReadOnlyUi() {
   const readOnly = isReadOnlyMode();
   const canEdit = !readOnly && canEditProjectDetail();
   const canCreate = !readOnly && canCreateProject();
+  const project = selectedProject();
+  const canCreateSchedule = canCreateProjectSchedule(project);
   const visibilityById = {
     newProject: canCreate,
     saveDetailBtn: canEdit,
@@ -2474,8 +2591,8 @@ function applyReadOnlyUi() {
     addIssue: canEdit,
     addClientContact: canEdit,
     addCommunication: canEdit,
-    addScheduleFromCalendar: canEdit,
-    addScheduleFromList: canEdit,
+    addScheduleFromCalendar: Boolean(currentUser && (canViewAllProjectSchedules() || isProjectWorkerDepartment())),
+    addScheduleFromList: Boolean(currentUser && (canViewAllProjectSchedules() || isProjectWorkerDepartment())),
   };
   Object.entries(visibilityById).forEach(([id, visible]) => {
     const element = $(id);
@@ -2501,12 +2618,26 @@ function applyReadOnlyUi() {
     if (field.id === "detailSearchInput") return;
     field.disabled = !canEdit;
   });
+  detailForm.querySelectorAll(".project-schedule-complete-input").forEach((input) => {
+    const project = selectedProject();
+    const entry = project ? (project.schedules || []).find((item) => item.id === input.dataset.scheduleEntryId) : null;
+    input.disabled = !canManageProjectScheduleEntry(project, entry);
+  });
+  projectStaffFields.forEach((id) => {
+    const field = $(id);
+    if (!field) return;
+    field.readOnly = true;
+    field.classList.toggle("is-readonly", true);
+  });
   detailForm.querySelectorAll(".issue-edit, .issue-delete, .issue-save, .issue-cancel").forEach((button) => {
     button.classList.toggle("hidden", !canEdit);
   });
-  detailForm.querySelectorAll(".issue-complete-input, .project-schedule-complete-input, .project-schedule-edit, .project-schedule-delete, #addProjectSchedule").forEach((element) => {
+  detailForm.querySelectorAll(".issue-complete-input, .issue-edit, .issue-delete, .issue-save, .issue-cancel").forEach((element) => {
     if (element.matches("input")) element.disabled = !canEdit;
     else element.classList.toggle("hidden", !canEdit);
+  });
+  detailForm.querySelectorAll("#addProjectSchedule").forEach((element) => {
+    element.classList.toggle("hidden", !canCreateSchedule);
   });
 }
 
@@ -2529,10 +2660,6 @@ function renderDetail() {
   });
   if (currentUser && isDepartment("pm")) {
     setValue("pm", currentPmName());
-  }
-  if ($("pm")) {
-    $("pm").readOnly = Boolean(currentUser && isDepartment("pm"));
-    $("pm").classList.toggle("is-readonly", Boolean(currentUser && isDepartment("pm")));
   }
 
   document.querySelectorAll('[name="hostingType"]').forEach((radio) => {
@@ -2587,7 +2714,8 @@ function renderDetail() {
 }
 
 function persistEntry() {
-  if (!isCreatingProject) void persist();
+  if (!isCreatingProject) return persist();
+  return Promise.resolve();
 }
 
 function isBlankContact(contact) {
@@ -2804,6 +2932,7 @@ function applyDetailFormToProject(project) {
   project.shortcutUrl = normalizeShortcutUrl(project.shortcutUrl);
   project.intranetUrl = normalizeShortcutUrl(project.intranetUrl);
   project.designUrl = normalizeShortcutUrl(project.designUrl);
+  applyProjectStaffIds(project);
   project.hostingType = document.querySelector('[name="hostingType"]:checked')?.value || "일반 웹호스팅";
   project.hasForeignLanguage = checkedOf("hasForeignLanguage");
   project.monthlyCollection = checkedOf("monthlyCollection");
@@ -2822,8 +2951,9 @@ async function saveDetail() {
     return;
   }
   if (!applyDetailFormToProject(project)) return;
-  if (currentUser && !isAdmin()) {
+  if (currentUser && isDepartment("pm")) {
     project.pm = currentPmName();
+    project.pmId = assignedProjectUserId();
   }
 
   if (creating) {
@@ -3428,6 +3558,7 @@ function isValidPassword(password) {
 
 let memberDialogMode = "create";
 let editingMemberId = "";
+const POSITION_OPTIONS = ["사원", "주임", "대리", "과장", "차장", "부장", "이사", "상무", "대표"];
 
 function departmentOptions(selected = "") {
   const departments = projectRepository.getDepartments?.() || [];
@@ -3437,6 +3568,21 @@ function departmentOptions(selected = "") {
       return `<option value="${escapeAttr(name)}" ${name === selected ? "selected" : ""}>${escapeHtml(name)}</option>`;
     })
     .join("");
+}
+
+function positionOptions(selected = "") {
+  const value = String(selected || "").trim();
+  const options = value && !POSITION_OPTIONS.includes(value) ? [...POSITION_OPTIONS, value] : POSITION_OPTIONS;
+  return `<option value="">선택</option>` + options
+    .map((position) => `<option value="${escapeAttr(position)}" ${position === value ? "selected" : ""}>${escapeHtml(position)}</option>`)
+    .join("");
+}
+
+function populatePositionSelect(selected = "") {
+  const select = $("memberPosition");
+  if (!select) return;
+  select.innerHTML = positionOptions(selected);
+  select.value = String(selected || "").trim();
 }
 
 function normalizeColorValue(value, fallback = "#d9eadf") {
@@ -3476,8 +3622,11 @@ function openMemberDialog(memberId = "") {
   setText("memberSubmitBtn", isEdit ? "저장" : "등록");
   setValue("memberId", user?.id || "");
   setValue("memberName", user?.name || "");
+  populatePositionSelect(user?.position || "");
+  setValue("memberHireDate", user?.hireDate || "");
+  setValue("memberResignDate", user?.resignDate || "");
   populateDepartmentSelect("memberDepartment", user?.department || "");
-  setValue("memberRole", user?.role === "admin" ? "admin" : "user");
+  setValue("memberRole", ["admin", "team_lead", "user"].includes(user?.role) ? user.role : "user");
   setValue("memberApproval", user?.approvalStatus || "비활성화");
   setValue("memberPassword", "");
   setValue("memberPasswordConfirm", "");
@@ -3597,6 +3746,9 @@ async function submitMemberForm(event) {
   if (!isAdmin()) return;
 
   const name = valueOf("memberName").trim();
+  const position = valueOf("memberPosition").trim();
+  const hireDate = valueOf("memberHireDate").trim();
+  const resignDate = valueOf("memberResignDate").trim();
   const role = valueOf("memberRole");
   const approvalStatus = valueOf("memberApproval");
   const department = valueOf("memberDepartment");
@@ -3623,7 +3775,7 @@ async function submitMemberForm(event) {
       }
     }
 
-    const patch = { name, role, approvalStatus, department };
+    const patch = { name, position, hireDate, resignDate, role, approvalStatus, department };
     if (password) patch.password = password;
     const result = await projectRepository.updateUser(editingMemberId, patch);
     setText("memberMessage", result.ok ? "회원 정보가 저장되었습니다." : result.message);
@@ -3653,6 +3805,9 @@ async function submitMemberForm(event) {
     id: valueOf("memberId"),
     password,
     name,
+    position,
+    hireDate,
+    resignDate,
     role,
     approvalStatus,
     department,
@@ -3776,10 +3931,10 @@ function renderBasicManagement() {
   if (!isAdmin()) return;
   const users = typeof projectRepository?.getUsers === "function" ? projectRepository.getUsers() : [];
   const inactiveUsers = users.filter((user) => user.approvalStatus !== "활성화");
-  const regularUsers = users.filter((user) => user.role !== "admin");
+  const activeUsers = users.filter((user) => user.approvalStatus === "활성화");
   setText("memberCount", users.length.toLocaleString("ko-KR"));
   setText("pendingMemberCount", inactiveUsers.length.toLocaleString("ko-KR"));
-  setText("regularMemberCount", regularUsers.length.toLocaleString("ko-KR"));
+  setText("regularMemberCount", activeUsers.length.toLocaleString("ko-KR"));
 
   renderMemberDepartmentFilter();
   const filteredUsers = filterMembers(users);
@@ -3788,19 +3943,19 @@ function renderBasicManagement() {
   rows.innerHTML =
     filteredUsers
       .map((user) => {
-        const isUserAdmin = user.role === "admin";
         const approval = user.approvalStatus || "비활성화";
         return `<tr data-member-id="${escapeAttr(user.id)}" class="member-row">
       <td>${escapeHtml(user.id)}</td>
       <td>${escapeHtml(user.name || "-")}</td>
       <td>${escapeHtml(user.department || "-")}</td>
+      <td>${escapeHtml(user.position || "-")}</td>
       <td>${escapeHtml(formatLeaveDays(user.leaveTotalDays || 0))}</td>
       <td>${escapeHtml(formatLeaveDays(user.leaveRemainingDays || 0))}</td>
-      <td><span class="role-badge ${isUserAdmin ? "admin" : "user"}">${isUserAdmin ? "관리자" : "일반"}</span></td>
+      <td><span class="role-badge ${roleBadgeClass(user.role)}">${escapeHtml(roleLabel(user.role))}</span></td>
       <td><span class="status-badge ${approvalBadgeClass(approval)}">${escapeHtml(employmentStatusLabel(approval))}</span></td>
     </tr>`;
       })
-      .join("") || '<tr><td colspan="7" class="empty-cell">조회된 회원이 없습니다.</td></tr>';
+      .join("") || '<tr><td colspan="8" class="empty-cell">조회된 회원이 없습니다.</td></tr>';
 
   rows.querySelectorAll("tr.member-row").forEach((row) => {
     row.addEventListener("click", () => openMemberDialog(row.dataset.memberId));
@@ -4425,7 +4580,6 @@ function renderVacationSchedule() {
 async function refreshVacationSchedule() {
   try {
     if (currentUser) {
-      if (isAdmin()) await projectRepository.refreshDepartments();
       await projectRepository.refreshVacationSchedule();
     } else {
       projectRepository.vacationScheduleCache = [];
@@ -4736,15 +4890,17 @@ function renderIssueProjectRows() {
 
 function allScheduleEntries() {
   const sourceProjects = projectScheduleVisibleProjects();
+  const canSeeEveryEntry = canViewAllProjectSchedules();
   return sourceProjects.flatMap((project) =>
-    (project.schedules || []).map((entry) => {
+    (project.schedules || []).flatMap((entry) => {
       const normalized = normalizeScheduleEntry(project, entry);
-      return {
+      const enriched = {
         ...normalized,
         projectId: project.id,
         projectNo: normalized.projectNo || project.projectNo || "",
         projectName: normalized.projectName || project.name || "",
       };
+      return canSeeEveryEntry || canViewProjectScheduleEntry(enriched) ? [enriched] : [];
     })
   );
 }
@@ -4761,6 +4917,21 @@ function scheduleStaffForMilestone(project, milestone) {
 
 function scheduleStaffForProject(project) {
   return scheduleStaffForMilestone(project, projectMilestone(project));
+}
+
+function scheduleStaffForCurrentUser(project = null) {
+  if (!currentUser) return null;
+  const name = assignedProjectUserName();
+  if (!name) return null;
+  if (isDepartment("pm")) return { staffRole: "PM", staffName: name };
+  if (isDepartment("디자인", "디자이너") && (!project || isAssignedProject(project))) return { staffRole: "디자이너", staffName: name };
+  if (isDepartment("퍼블리싱", "퍼블리셔") && (!project || isAssignedProject(project))) return { staffRole: "퍼블리셔", staffName: name };
+  if (isDepartment("프로그램", "프로그래머") && (!project || isAssignedProject(project))) return { staffRole: "프로그래머", staffName: name };
+  return null;
+}
+
+function defaultScheduleStaff(project) {
+  return scheduleStaffForCurrentUser(project) || scheduleStaffForProject(project);
 }
 
 function scheduleStaffBadgeText(entry) {
@@ -4913,6 +5084,13 @@ function scheduleListMode() {
   return $("scheduleListWeek")?.checked ? "week" : "month";
 }
 
+function focusScheduleCursorOnDate(dateText) {
+  const parts = parseDateParts(dateText);
+  if (!parts) return;
+  scheduleCursor = { year: parts.year, month: parts.month };
+  scheduleWeekAnchor = dateText;
+}
+
 function renderScheduleCalendarGrid() {
   const grid = $("scheduleCalendarGrid");
   if (!grid) return;
@@ -4974,13 +5152,14 @@ function renderScheduleCalendarGrid() {
       event.stopPropagation();
       if (document.body.classList.contains("schedule-detail-open")) closeDetail();
       const entry = allScheduleEntries().find((row) => row.id === item.dataset.scheduleEntryId);
-      if (entry && canEditProjectDetail()) openScheduleDialog(entry.date || todayDate(), { editingEntry: entry });
+      const project = entry ? findProjectByScheduleInput(entry.projectId) : null;
+      if (entry && canManageProjectScheduleEntry(project, entry)) openScheduleDialog(entry.date || todayDate(), { editingEntry: entry });
       else if (entry) showScheduleProjectDetail(entry);
     });
   });
   grid.querySelectorAll("[data-schedule-date]").forEach((item) => {
     item.addEventListener("click", () => {
-      if (!canEditProjectDetail()) return;
+      if (!currentUser || (!canViewAllProjectSchedules() && !isProjectWorkerDepartment())) return;
       openScheduleDialog(item.dataset.scheduleDate);
     });
   });
@@ -5003,9 +5182,11 @@ function renderScheduleListRows() {
   }
   const rows = scheduleEntriesWithDemo({ start, end })
     .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")) || String(a.projectName || "").localeCompare(String(b.projectName || ""), "ko"));
-  const canToggle = canEditProjectDetail();
   tbody.innerHTML = rows.length
-    ? rows.map((entry) => `<tr data-schedule-entry-id="${escapeAttr(entry.id)}" class="${entry.completed ? "is-schedule-completed" : ""}">
+    ? rows.map((entry) => {
+        const project = findProjectByScheduleInput(entry.projectId);
+        const canToggle = canManageProjectScheduleEntry(project, entry);
+        return `<tr data-schedule-entry-id="${escapeAttr(entry.id)}" class="${entry.completed ? "is-schedule-completed" : ""}">
         <td>${escapeHtml(entry.date || "-")}</td>
         <td class="schedule-project-name-cell">${escapeHtml(entry.projectName || "-")}</td>
         <td><span class="schedule-milestone-badge">${escapeHtml(entry.milestone || "-")}</span></td>
@@ -5016,7 +5197,8 @@ function renderScheduleListRows() {
             <input type="checkbox" class="schedule-list-complete-input" data-schedule-entry-id="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} ${canToggle ? "" : "disabled"} />
           </label>
         </td>
-      </tr>`).join("")
+      </tr>`;
+      }).join("")
     : '<tr><td colspan="6" class="empty-cell">등록된 일정이 없습니다.</td></tr>';
   tbody.querySelectorAll("[data-schedule-entry-id]").forEach((row) => {
     row.querySelector(".schedule-list-complete-input")?.addEventListener("change", (event) => {
@@ -5032,7 +5214,8 @@ function renderScheduleListRows() {
       event.stopPropagation();
       if (document.body.classList.contains("schedule-detail-open")) closeDetail();
       const entry = allScheduleEntries().find((item) => item.id === row.dataset.scheduleEntryId);
-      if (entry && canEditProjectDetail()) openScheduleDialog(entry.date || todayDate(), { editingEntry: entry });
+      const project = entry ? findProjectByScheduleInput(entry.projectId) : null;
+      if (entry && canManageProjectScheduleEntry(project, entry)) openScheduleDialog(entry.date || todayDate(), { editingEntry: entry });
       else if (entry) showScheduleProjectDetail(entry);
     });
   });
@@ -5098,7 +5281,7 @@ function renderScheduleProjectResults() {
       if (!project) return;
       setValue("scheduleProjectId", project.id);
       setValue("scheduleProjectSearch", `${project.projectNo || "-"} · ${project.name || "-"}`);
-      const staff = scheduleStaffForProject(project);
+      const staff = defaultScheduleStaff(project);
       setValue("scheduleMilestoneSelect", projectMilestone(project) || "");
       setValue("scheduleStaffRoleSelect", staff.staffRole);
       setValue("scheduleStaffNameInput", staff.staffName);
@@ -5109,15 +5292,23 @@ function renderScheduleProjectResults() {
 }
 
 function syncScheduleAssignFieldsVisibility() {
-  $("scheduleAssignFields")?.classList.toggle("hidden", !valueOf("scheduleProjectId"));
+  $("scheduleAssignFields")?.classList.toggle("hidden", !canViewAllProjectSchedules() || !valueOf("scheduleProjectId"));
 }
 
 function openScheduleDialog(date = todayDate(), options = {}) {
-  if (!requireWritableAction()) return;
   const editingEntry = options.editingEntry || null;
   scheduleDialogEditId = editingEntry?.id || "";
   const presetProjectId = editingEntry?.projectId || options.projectId || "";
   const project = presetProjectId ? findProjectByScheduleInput(presetProjectId) : null;
+  const canOpen = editingEntry
+    ? canManageProjectScheduleEntry(project, editingEntry)
+    : project
+      ? canCreateProjectSchedule(project)
+      : Boolean(currentUser && (canViewAllProjectSchedules() || isProjectWorkerDepartment()));
+  if (!canOpen) {
+    alert("현재 계정은 프로젝트 일정을 등록하거나 수정할 권한이 없습니다.");
+    return;
+  }
   setText("scheduleDialogTitle", editingEntry ? "일정 수정" : "일정 추가");
   setText("scheduleDialogDate", `${date} 일정을 ${editingEntry ? "수정" : "등록"}합니다.`);
   setValue("scheduleDateInput", editingEntry?.date || date);
@@ -5137,7 +5328,7 @@ function openScheduleDialog(date = todayDate(), options = {}) {
     setValue("scheduleStaffRoleSelect", staff.staffRole || "PM");
     setValue("scheduleStaffNameInput", staff.staffName || "");
   } else if (project) {
-    const staff = scheduleStaffForProject(project);
+    const staff = defaultScheduleStaff(project);
     setValue("scheduleProjectId", project.id);
     setValue("scheduleProjectSearch", `${project.projectNo || "-"} · ${project.name || "-"}`);
     setValue("scheduleMilestoneSelect", projectMilestone(project) || "");
@@ -5179,12 +5370,16 @@ function removeScheduleEntry(entryId) {
   });
 }
 
-function submitScheduleForm(event) {
+async function submitScheduleForm(event) {
   event.preventDefault();
-  if (!requireWritableAction()) return;
   const project = selectedScheduleProject();
   if (!project) {
     alert("프로젝트를 선택해 주세요.");
+    return;
+  }
+  const previousEntry = scheduleDialogEditId ? (project.schedules || []).find((entry) => entry.id === scheduleDialogEditId) : null;
+  if (!canManageProjectScheduleEntry(project, previousEntry)) {
+    alert("현재 계정은 이 일정을 등록하거나 수정할 권한이 없습니다.");
     return;
   }
   const detail = valueOf("scheduleDetailInput").trim();
@@ -5192,6 +5387,7 @@ function submitScheduleForm(event) {
     alert("상세 내용을 입력해 주세요.");
     return;
   }
+  const currentStaff = !scheduleDialogEditId ? scheduleStaffForCurrentUser(project) : null;
   const entry = {
     id: scheduleDialogEditId || crypto.randomUUID(),
     date: valueOf("scheduleDateInput") || todayDate(),
@@ -5199,14 +5395,23 @@ function submitScheduleForm(event) {
     projectNo: project.projectNo || "",
     projectName: project.name || "",
     milestone: valueOf("scheduleMilestoneSelect") || projectMilestone(project) || "",
-    staffRole: valueOf("scheduleStaffRoleSelect") || "PM",
-    staffName: valueOf("scheduleStaffNameInput").trim(),
+    staffRole: currentStaff?.staffRole || valueOf("scheduleStaffRoleSelect") || "PM",
+    staffName: currentStaff?.staffName || valueOf("scheduleStaffNameInput").trim(),
     detail,
+    createdById: previousEntry?.createdById || assignedProjectUserId(),
+    createdByName: previousEntry?.createdByName || assignedProjectUserName(),
+    createdAt: previousEntry?.createdAt || new Date().toISOString(),
     completed: scheduleDialogEditId ? checkedOf("scheduleCompletedInput") : false,
   };
   if (scheduleDialogEditId) removeScheduleEntry(scheduleDialogEditId);
   saveScheduleEntryToProject(project, entry);
-  persistEntry();
+  focusScheduleCursorOnDate(entry.date);
+  try {
+    await persistEntry();
+  } catch (error) {
+    alert(error?.message || "일정을 저장하지 못했습니다.");
+    return;
+  }
   closeScheduleDialog();
   renderScheduleViews();
   renderProjectSchedules(project);
@@ -5214,7 +5419,9 @@ function submitScheduleForm(event) {
 }
 
 function projectScheduleRows(project) {
-  return (project?.schedules || []).slice().sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  const rows = (project?.schedules || []).map((entry) => normalizeScheduleEntry(project, entry));
+  const visibleRows = canViewAllProjectSchedules() ? rows : rows.filter(canViewProjectScheduleEntry);
+  return visibleRows.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
 }
 
 function renderProjectSchedules(project) {
@@ -5222,12 +5429,14 @@ function renderProjectSchedules(project) {
   if (!list) return;
   const rows = projectScheduleRows(project);
   list.innerHTML = rows.length
-    ? rows.map((entry) => `<article class="communication-card project-schedule-card${entry.completed ? " is-schedule-completed" : ""}" data-detail-schedule-id="${escapeAttr(entry.id)}">
+    ? rows.map((entry) => {
+        const canManageEntry = canManageProjectScheduleEntry(project, entry);
+        return `<article class="communication-card project-schedule-card${entry.completed ? " is-schedule-completed" : ""}" data-detail-schedule-id="${escapeAttr(entry.id)}">
         <div class="communication-view">
           <div class="entry-card-head">
             <div class="project-schedule-head entry-card-head-main">
               <label class="project-schedule-complete check-option">
-                <input type="checkbox" class="project-schedule-complete-input" data-schedule-entry-id="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} />
+                <input type="checkbox" class="project-schedule-complete-input" data-schedule-entry-id="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} ${canManageEntry ? "" : "disabled"} />
                 <span>완료</span>
               </label>
               <span class="project-schedule-date">${escapeHtml(entry.date || "-")}</span>
@@ -5235,13 +5444,14 @@ function renderProjectSchedules(project) {
               <span class="schedule-staff-badge">${escapeHtml(scheduleStaffBadgeText(entry))}</span>
             </div>
             <div class="entry-card-head-actions">
-              <button class="ghost-btn project-schedule-edit" type="button">수정</button>
-              <button class="ghost-btn danger project-schedule-delete" type="button">삭제</button>
+              <button class="ghost-btn project-schedule-edit${canManageEntry ? "" : " hidden"}" type="button">수정</button>
+              <button class="ghost-btn danger project-schedule-delete${canManageEntry ? "" : " hidden"}" type="button">삭제</button>
             </div>
           </div>
           <p class="issue-text">${escapeHtml(entry.detail || "일정")}</p>
         </div>
-      </article>`).join("")
+      </article>`;
+      }).join("")
     : '<p class="empty">등록된 일정이 없습니다.</p>';
   list.querySelectorAll("[data-detail-schedule-id]").forEach((card) => {
     const entry = rows.find((item) => item.id === card.dataset.detailScheduleId);
@@ -5255,11 +5465,11 @@ function renderProjectSchedules(project) {
       }
     });
     card.querySelector(".project-schedule-edit")?.addEventListener("click", () => {
-      if (!requireWritableAction()) return;
+      if (!canManageProjectScheduleEntry(project, entry)) return;
       openScheduleDialog(entry.date || todayDate(), { editingEntry: entry, projectId: project.id });
     });
     card.querySelector(".project-schedule-delete")?.addEventListener("click", () => {
-      if (!requireWritableAction()) return;
+      if (!canManageProjectScheduleEntry(project, entry)) return;
       if (!confirm("이 일정을 삭제할까요?")) return;
       removeScheduleEntry(entry.id);
       persistEntry();
@@ -5276,9 +5486,12 @@ function openProjectScheduleDropdown() {
 }
 
 function addProjectSchedule() {
-  if (!requireWritableAction()) return;
   const project = selectedProject();
   if (!project) return;
+  if (!canCreateProjectSchedule(project)) {
+    alert("현재 계정은 이 프로젝트에 일정을 등록할 권한이 없습니다.");
+    return;
+  }
   openScheduleDialog(todayDate(), { projectId: project.id });
 }
 
@@ -5313,10 +5526,10 @@ function bindScheduleUi() {
   on("scheduleCalendarMonth", "change", renderScheduleCalendarGrid);
   on("scheduleCalendarWeek", "change", renderScheduleCalendarGrid);
   on("addScheduleFromCalendar", "click", () => {
-    if (canEditProjectDetail()) openScheduleDialog(dateFromParts(scheduleCursor.year, scheduleCursor.month, 1));
+    if (currentUser && (canViewAllProjectSchedules() || isProjectWorkerDepartment())) openScheduleDialog(dateFromParts(scheduleCursor.year, scheduleCursor.month, 1));
   });
   on("addScheduleFromList", "click", () => {
-    if (canEditProjectDetail()) openScheduleDialog(scheduleWeekAnchor);
+    if (currentUser && (canViewAllProjectSchedules() || isProjectWorkerDepartment())) openScheduleDialog(scheduleWeekAnchor);
   });
   on("closeScheduleDialog", "click", closeScheduleDialog);
   on("scheduleForm", "submit", submitScheduleForm);
@@ -5329,7 +5542,9 @@ function bindScheduleUi() {
   on("scheduleMilestoneSelect", "change", () => {
     const project = selectedScheduleProject();
     if (!project) return;
-    const staff = scheduleStaffForMilestone(project, valueOf("scheduleMilestoneSelect"));
+    const staff = scheduleDialogEditId
+      ? scheduleStaffForMilestone(project, valueOf("scheduleMilestoneSelect"))
+      : scheduleStaffForCurrentUser(project) || scheduleStaffForMilestone(project, valueOf("scheduleMilestoneSelect"));
     setValue("scheduleStaffRoleSelect", staff.staffRole);
     setValue("scheduleStaffNameInput", staff.staffName || "");
   });
@@ -5349,7 +5564,7 @@ function renderLoginLogs() {
     ? logs.map((log) => `<tr>
         <td>${escapeHtml(log.userId || "-")}</td>
         <td>${escapeHtml(log.name || "-")}</td>
-        <td><span class="role-badge ${log.role === "admin" ? "admin" : "user"}">${log.role === "admin" ? "관리자" : "일반"}</span></td>
+        <td><span class="role-badge ${roleBadgeClass(log.role)}">${escapeHtml(roleLabel(log.role))}</span></td>
         <td><span class="status-badge ${log.result === "success" ? "approved" : "rejected"}">${log.result === "success" ? "성공" : "실패"}</span></td>
         <td>${escapeHtml(log.failureReason || "-")}</td>
         <td>${escapeHtml(log.ip || "-")}</td>
@@ -5431,6 +5646,135 @@ async function refreshProjectLogs(page = projectLogPage) {
   }
 }
 
+const PROJECT_ASSIGNMENT_FILTERS = [
+  { id: "projectAssignmentPmFilter", label: "전체 PM", nameField: "pm", idField: "pmId", departments: ["pm"] },
+  { id: "projectAssignmentDesignerFilter", label: "전체 디자이너", nameField: "designer", idField: "designerId", departments: ["디자인", "디자이너"] },
+  { id: "projectAssignmentPublisherFilter", label: "전체 퍼블리셔", nameField: "publisher", idField: "publisherId", departments: ["퍼블리싱", "퍼블리셔"] },
+  { id: "projectAssignmentProgrammerFilter", label: "전체 프로그래머", nameField: "programmer", idField: "programmerId", departments: ["프로그램", "프로그래머"] },
+];
+
+function staffByDepartments(...departments) {
+  const allowed = departments.map((department) => normalizeDepartmentKey(department));
+  const users = typeof projectRepository?.getUsers === "function" ? projectRepository.getUsers() : [];
+  return users
+    .filter((user) => allowed.includes(normalizeDepartmentKey(user.department || "")))
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ko"));
+}
+
+function projectAssignmentSelect(project, nameField, idField, departments) {
+  const users = staffByDepartments(...departments);
+  const activeUsers = users.filter((user) => user.approvalStatus === "활성화");
+  const inactiveUsers = users.filter((user) => user.approvalStatus !== "활성화");
+  const currentId = String(project[idField] || "").trim();
+  const currentName = String(project[nameField] || "").trim();
+  const hasCurrent = users.some((user) => String(user.id || "") === currentId || String(user.name || "") === currentName);
+  const optionForUser = (user) => {
+    const selected = currentId ? String(user.id || "") === currentId : String(user.name || "") === currentName;
+    return `<option value="${escapeAttr(user.id || "")}" data-name="${escapeAttr(user.name || "")}" ${selected ? "selected" : ""}>${escapeHtml(user.name || "-")}</option>`;
+  };
+  const options = [
+    '<option value="">미배정</option>',
+    ...activeUsers.map(optionForUser),
+  ];
+  if (inactiveUsers.length) {
+    options.push('<option value="" disabled>──── 퇴사자 ────</option>');
+    options.push(...inactiveUsers.map(optionForUser));
+  }
+  if (currentName && !hasCurrent) {
+    options.push(`<option value="${escapeAttr(currentId)}" data-name="${escapeAttr(currentName)}" selected>${escapeHtml(currentName)}</option>`);
+  }
+  return `<select class="member-dialog-select" data-project-assignment-id="${escapeAttr(project.id)}" data-project-assignment-field="${escapeAttr(nameField)}" data-project-assignment-id-field="${escapeAttr(idField)}">${options.join("")}</select>`;
+}
+
+function projectAssignmentFilterValue(project, nameField, idField) {
+  return String(project[idField] || project[nameField] || "").trim();
+}
+
+function populateProjectAssignmentFilters() {
+  PROJECT_ASSIGNMENT_FILTERS.forEach(({ id, label, nameField, idField, departments }) => {
+    const select = $(id);
+    if (!select) return;
+    const current = select.value || "";
+    const users = staffByDepartments(...departments);
+    const seen = new Set();
+    const options = [`<option value="">${escapeHtml(label)}</option>`];
+    users.forEach((user) => {
+      const value = String(user.id || user.name || "").trim();
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      const suffix = user.approvalStatus === "활성화" ? "" : " (퇴사)";
+      options.push(`<option value="${escapeAttr(value)}">${escapeHtml(`${user.name || "-"}${suffix}`)}</option>`);
+    });
+    [...new Set(projects.map((project) => projectAssignmentFilterValue(project, nameField, idField)).filter(Boolean))].forEach((value) => {
+      if (!seen.has(value)) options.push(`<option value="${escapeAttr(value)}">${escapeHtml(value)}</option>`);
+    });
+    select.innerHTML = options.join("");
+    select.value = [...select.options].some((option) => option.value === current) ? current : "";
+  });
+}
+
+function filteredProjectAssignmentRows() {
+  const query = valueOf("projectAssignmentSearchInput").trim().toLowerCase();
+  return [...projects].filter(hasProjectNo).filter((project) => {
+    const haystack = [project.projectNo, project.name].map((value) => String(value || "").toLowerCase()).join(" ");
+    if (query && !haystack.includes(query)) return false;
+    return PROJECT_ASSIGNMENT_FILTERS.every(({ id, nameField, idField }) => {
+      const filterValue = valueOf(id).trim();
+      if (!filterValue) return true;
+      return projectAssignmentFilterValue(project, nameField, idField) === filterValue;
+    });
+  });
+}
+
+function openProjectAssignmentDetail(projectId) {
+  if (!projectId) return;
+  cancelCreateProject();
+  selectedId = projectId;
+  document.body.classList.remove("schedule-detail-open");
+  document.body.classList.add("detail-open");
+  closeDetailDropdowns();
+  renderAll(false);
+  saveUiSessionState();
+}
+
+function renderProjectAssignmentRows() {
+  const tbody = $("projectAssignmentRows");
+  if (!tbody) return;
+  if (!isAdmin()) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">관리자만 확인할 수 있습니다.</td></tr>';
+    return;
+  }
+  populateProjectAssignmentFilters();
+  const rows = filteredProjectAssignmentRows().sort(compareProjectNo);
+  tbody.innerHTML = rows.length
+    ? rows
+        .map(
+          (project) => `<tr data-project-assignment-row="${escapeAttr(project.id)}" tabindex="0">
+            <td>${escapeHtml(project.projectNo || "-")}</td>
+            <td>${escapeHtml(project.name || "-")}</td>
+            <td>${projectAssignmentSelect(project, "pm", "pmId", ["pm"])}</td>
+            <td>${projectAssignmentSelect(project, "designer", "designerId", ["디자인", "디자이너"])}</td>
+            <td>${projectAssignmentSelect(project, "publisher", "publisherId", ["퍼블리싱", "퍼블리셔"])}</td>
+            <td>${projectAssignmentSelect(project, "programmer", "programmerId", ["프로그램", "프로그래머"])}</td>
+          </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="6" class="empty-cell">표시할 프로젝트가 없습니다.</td></tr>';
+  tbody.querySelectorAll("[data-project-assignment-row]").forEach((row) => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("select, button, input, a")) return;
+      event.stopPropagation();
+      openProjectAssignmentDetail(row.dataset.projectAssignmentRow);
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      if (event.target.closest("select, button, input, a")) return;
+      event.preventDefault();
+      openProjectAssignmentDetail(row.dataset.projectAssignmentRow);
+    });
+  });
+}
+
 
 function renderAll(includeFilters = true) {
   if (includeFilters) renderFilters();
@@ -5438,6 +5782,7 @@ function renderAll(includeFilters = true) {
   renderRows();
   renderMonthlyRows();
   renderIssueProjectRows();
+  renderProjectAssignmentRows();
   renderBasicManagement();
   renderDepartments();
   renderLeaveManagement();
@@ -5493,6 +5838,7 @@ document.addEventListener("input", (event) => {
   }
   if (event.target.closest(".detail-main-grid")) updateDetailFilledState();
   if (event.target.id === "searchInput") renderRows();
+  if (event.target.id === "projectAssignmentSearchInput") renderProjectAssignmentRows();
   if (event.target.id === "memberSearchInput") renderBasicManagement();
   if (event.target.id === "detailSearchInput") {
     const project = selectedProject();
@@ -5504,6 +5850,22 @@ document.addEventListener("input", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  const assignmentSelect = event.target.closest?.("[data-project-assignment-field]");
+  if (assignmentSelect) {
+    const project = projects.find((item) => item.id === assignmentSelect.dataset.projectAssignmentId);
+    if (!project || !isAdmin()) return;
+    const nameField = assignmentSelect.dataset.projectAssignmentField;
+    const idField = assignmentSelect.dataset.projectAssignmentIdField;
+    const selectedOption = assignmentSelect.selectedOptions?.[0];
+    project[idField] = assignmentSelect.value || "";
+    project[nameField] = assignmentSelect.value ? selectedOption?.dataset.name || selectedOption?.textContent?.trim() || "" : "";
+    void persist().then(() => {
+      renderRows();
+      renderProjectAssignmentRows();
+      renderDetail();
+    });
+    return;
+  }
   if (event.target.closest(".detail-main-grid")) updateDetailFilledState();
   if (event.target.id === "hasIssue" || event.target.id === "monthlyCollection") updateDetailHeaderChecks();
   if (event.target.id === "pmFilter") {
@@ -5511,6 +5873,7 @@ document.addEventListener("change", (event) => {
     milestoneFilter = "";
     renderRows();
   }
+  if (event.target.id?.startsWith("projectAssignment") && event.target.id.endsWith("Filter")) renderProjectAssignmentRows();
   if (event.target.id === "memberDepartmentFilter") renderBasicManagement();
   if (event.target.name === "vacationScheduleViewMode") renderVacationSchedule();
   if (event.target.name === "vacationListPeriod") renderVacationScheduleRows();

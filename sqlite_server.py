@@ -40,6 +40,7 @@ SESSIONS = {}
 LOGIN_FAILURE_COUNT = 0
 LOGIN_LOCKED = False
 DEFAULT_DEPARTMENTS = ("경영관리", "영업", "pm", "디자인", "퍼블리싱", "프로그램", "유지보수")
+USER_ROLES = ("admin", "team_lead", "user")
 DEFAULT_DEPARTMENT_COLORS = {
     "경영관리": "#d9eadf",
     "영업": "#fdecc8",
@@ -49,6 +50,12 @@ DEFAULT_DEPARTMENT_COLORS = {
     "프로그램": "#cffafe",
     "유지보수": "#fee2e2",
 }
+PROJECT_STAFF_ASSIGNMENTS = (
+    ("pm", "pmId", ("pm",)),
+    ("designer", "designerId", ("디자인", "디자이너")),
+    ("publisher", "publisherId", ("퍼블리싱", "퍼블리셔")),
+    ("programmer", "programmerId", ("프로그램", "프로그래머")),
+)
 PDF_DANGEROUS_MARKERS = (
     b"/JavaScript",
     b"/JS",
@@ -181,6 +188,11 @@ def normalize_approval_status(status, role="user"):
     return "활성화" if role == "admin" else "비활성화"
 
 
+def normalize_user_role(role):
+    value = str(role or "").strip()
+    return value if value in USER_ROLES else "user"
+
+
 def is_strong_password(password):
     value = str(password or "")
     return len(value) >= 8 and re.search(r"[A-Za-z]", value) and re.search(r"[0-9]", value) and re.search(r"[^A-Za-z0-9]", value)
@@ -207,6 +219,9 @@ def public_user(row):
         "role": row["role"],
         "approvalStatus": row["approval_status"],
         "department": row["department"] if "department" in row.keys() else "",
+        "position": row["position"] if "position" in row.keys() else "",
+        "hireDate": row["hire_date"] if "hire_date" in row.keys() else "",
+        "resignDate": row["resign_date"] if "resign_date" in row.keys() else "",
     }
 
 
@@ -304,15 +319,18 @@ def legacy_users(conn):
     return conn.execute("SELECT id, password, name, role, approval_status FROM users").fetchall()
 
 
-def upsert_secure_user(conn, user_id, password_hash, name, role, approval_status, department=""):
-    role = "admin" if role == "admin" else "user"
+def upsert_secure_user(conn, user_id, password_hash, name, role, approval_status, department="", position="", hire_date="", resign_date=""):
+    role = normalize_user_role(role)
     approval = normalize_approval_status(approval_status, role)
     department = normalize_department(department)
+    position = str(position or "").strip()[:40]
+    hire_date = str(hire_date or "").strip()[:10]
+    resign_date = str(resign_date or "").strip()[:10]
     conn.execute(
         """
         INSERT INTO users_secure
-          (id_lookup, id_enc, password, name_enc, role, approval_status, department)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+          (id_lookup, id_enc, password, name_enc, role, approval_status, department, position, hire_date, resign_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id_lookup) DO UPDATE SET
           id_enc = excluded.id_enc,
           password = excluded.password,
@@ -320,10 +338,77 @@ def upsert_secure_user(conn, user_id, password_hash, name, role, approval_status
           role = excluded.role,
           approval_status = excluded.approval_status,
           department = excluded.department,
+          position = excluded.position,
+          hire_date = excluded.hire_date,
+          resign_date = excluded.resign_date,
           updated_at = CURRENT_TIMESTAMP
         """,
-        (id_lookup(user_id), encrypt_text(user_id), password_hash, encrypt_text(name), role, approval, department),
+        (id_lookup(user_id), encrypt_text(user_id), password_hash, encrypt_text(name), role, approval, department, position, hire_date, resign_date),
     )
+
+
+def create_users_secure_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users_secure (
+          id_lookup TEXT PRIMARY KEY,
+          id_enc TEXT NOT NULL,
+          password TEXT NOT NULL,
+          name_enc TEXT NOT NULL,
+          role TEXT NOT NULL CHECK(role IN ('admin', 'team_lead', 'user')),
+          approval_status TEXT NOT NULL,
+          department TEXT NOT NULL DEFAULT '',
+          position TEXT NOT NULL DEFAULT '',
+          hire_date TEXT NOT NULL DEFAULT '',
+          resign_date TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+def migrate_users_secure_role_check(conn):
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users_secure'").fetchone()
+    sql = row["sql"] if row else ""
+    if "team_lead" in str(sql):
+        return
+    legacy_columns = [row["name"] for row in conn.execute("PRAGMA table_info(users_secure)").fetchall()]
+    if not legacy_columns:
+        return
+    conn.execute("ALTER TABLE users_secure RENAME TO users_secure_legacy_role")
+    create_users_secure_table(conn)
+    target_columns = [
+        "id_lookup",
+        "id_enc",
+        "password",
+        "name_enc",
+        "role",
+        "approval_status",
+        "department",
+        "position",
+        "hire_date",
+        "resign_date",
+        "created_at",
+        "updated_at",
+    ]
+    defaults = {
+        "department": "''",
+        "position": "''",
+        "hire_date": "''",
+        "resign_date": "''",
+        "created_at": "CURRENT_TIMESTAMP",
+        "updated_at": "CURRENT_TIMESTAMP",
+    }
+    select_exprs = [column if column in legacy_columns else defaults.get(column, "''") for column in target_columns]
+    conn.execute(
+        f"""
+        INSERT INTO users_secure ({", ".join(target_columns)})
+        SELECT {", ".join(select_exprs)}
+        FROM users_secure_legacy_role
+        """
+    )
+    conn.execute("DROP TABLE users_secure_legacy_role")
 
 
 def ensure_db():
@@ -376,24 +461,17 @@ def ensure_db():
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_admin_project_records_mode_project_no ON admin_project_records(mode, project_no)")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users_secure (
-              id_lookup TEXT PRIMARY KEY,
-              id_enc TEXT NOT NULL,
-              password TEXT NOT NULL,
-              name_enc TEXT NOT NULL,
-              role TEXT NOT NULL CHECK(role IN ('admin', 'user')),
-              approval_status TEXT NOT NULL,
-              department TEXT NOT NULL DEFAULT '',
-              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
+        create_users_secure_table(conn)
+        migrate_users_secure_role_check(conn)
         columns = [row["name"] for row in conn.execute("PRAGMA table_info(users_secure)").fetchall()]
         if "department" not in columns:
             conn.execute("ALTER TABLE users_secure ADD COLUMN department TEXT NOT NULL DEFAULT ''")
+        if "position" not in columns:
+            conn.execute("ALTER TABLE users_secure ADD COLUMN position TEXT NOT NULL DEFAULT ''")
+        if "hire_date" not in columns:
+            conn.execute("ALTER TABLE users_secure ADD COLUMN hire_date TEXT NOT NULL DEFAULT ''")
+        if "resign_date" not in columns:
+            conn.execute("ALTER TABLE users_secure ADD COLUMN resign_date TEXT NOT NULL DEFAULT ''")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS departments (
@@ -532,7 +610,7 @@ def ensure_db():
         weak_rows = conn.execute("SELECT * FROM users_secure WHERE password NOT LIKE 'pbkdf2:%'").fetchall()
         for row in weak_rows:
             user = public_user(row)
-            upsert_secure_user(conn, user["id"], hash_password(row["password"]), user.get("name", ""), user.get("role", "user"), user.get("approvalStatus", ""), user.get("department", ""))
+            upsert_secure_user(conn, user["id"], hash_password(row["password"]), user.get("name", ""), user.get("role", "user"), user.get("approvalStatus", ""), user.get("department", ""), user.get("position", ""), user.get("hireDate", ""), user.get("resignDate", ""))
 
         admin_row = conn.execute("SELECT 1 FROM users_secure WHERE id_lookup = ?", (id_lookup(DEFAULT_ADMIN_ID),)).fetchone()
         if not admin_row and DEFAULT_ADMIN_PASSWORD:
@@ -545,7 +623,7 @@ def ensure_db():
 
 
 def get_users(conn):
-    rows = conn.execute("SELECT id_enc, name_enc, role, approval_status, department FROM users_secure ORDER BY role, id_lookup").fetchall()
+    rows = conn.execute("SELECT id_enc, name_enc, role, approval_status, department, position, hire_date, resign_date FROM users_secure ORDER BY role, id_lookup").fetchall()
     users = []
     year = date.today().year
     for row in rows:
@@ -558,6 +636,11 @@ def get_users(conn):
         user["leaveRemainingDays"] = summary.get("remainingDays", 0)
         users.append(user)
     return users
+
+
+def get_user_directory(conn):
+    rows = conn.execute("SELECT id_enc, name_enc, role, approval_status, department, position, hire_date, resign_date FROM users_secure ORDER BY role, id_lookup").fetchall()
+    return [public_user(row) for row in rows]
 
 
 def get_departments(conn):
@@ -712,7 +795,7 @@ def log_login_attempt(conn, user_id, name, role, result, failure_reason, ip):
         (
             encrypt_text(str(user_id or "")),
             encrypt_text(str(name or "")),
-            "admin" if role == "admin" else "user",
+            normalize_user_role(role),
             "success" if result == "success" else "failure",
             str(failure_reason or ""),
             str(ip or ""),
@@ -1026,7 +1109,7 @@ def log_project_actions(conn, user, entries):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     user_id = str(user.get("id") or "")
     name = str(user.get("name") or "")
-    role = "admin" if user.get("role") == "admin" else "user"
+    role = normalize_user_role(user.get("role"))
     for entry in entries:
         action = str(entry.get("action") or "?섏젙").strip() or "?섏젙"
         category = str(entry.get("category") or "?꾨줈?앺듃").strip() or "?꾨줈?앺듃"
@@ -1156,11 +1239,53 @@ def build_project_logs_from_diff(before_projects, after_projects):
     return logs[:200]
 
 
+def schedule_owned_by_user(entry, user):
+    if not isinstance(entry, dict) or not user:
+        return False
+    values = user_match_values(user)
+    owner_id = str(entry.get("createdById") or "").strip().lower()
+    owner_name = str(entry.get("createdByName") or "").strip().lower()
+    staff_name = str(entry.get("staffName") or entry.get("staff") or "").strip().lower()
+    return bool((owner_id and owner_id in values) or (owner_name and owner_name in values) or (not owner_id and staff_name in values))
+
+
+def merge_schedule_entries_for_user(existing_project, incoming_project, user):
+    if user_in_department(user, "pm") or user_can_edit_projects(user):
+        return incoming_project.get("schedules") or []
+    if not user_assigned_to_project(user, existing_project):
+        return existing_project.get("schedules") or []
+
+    existing_entries = existing_project.get("schedules") or []
+    incoming_entries = incoming_project.get("schedules") or []
+    incoming_by_id = {
+        str(entry.get("id")): entry
+        for entry in incoming_entries
+        if isinstance(entry, dict) and str(entry.get("id") or "").strip()
+    }
+    merged = []
+    used = set()
+    for entry in existing_entries:
+        entry_id = str(entry.get("id") or "").strip() if isinstance(entry, dict) else ""
+        if entry_id and entry_id in incoming_by_id:
+            candidate = incoming_by_id[entry_id]
+            merged.append(candidate if schedule_owned_by_user(candidate, user) else entry)
+            used.add(entry_id)
+        else:
+            merged.append(entry)
+    for entry in incoming_entries:
+        if not isinstance(entry, dict):
+            continue
+        entry_id = str(entry.get("id") or "").strip()
+        if entry_id and entry_id in used:
+            continue
+        if schedule_owned_by_user(entry, user):
+            merged.append(entry)
+    return merged
+
+
 def merge_projects_for_user(existing_projects, incoming_projects, user):
     if is_admin(user):
         return incoming_projects
-    if not user_can_edit_projects(user):
-        return existing_projects
     incoming_by_id = {project_identity(project): project for project in incoming_projects if isinstance(project, dict) and project_identity(project)}
     merged = []
     used = set()
@@ -1169,12 +1294,17 @@ def merge_projects_for_user(existing_projects, incoming_projects, user):
         can_edit_project = user_in_department(user, "pm") or user_can_access_project(user, project)
         if key in incoming_by_id and can_edit_project:
             candidate = incoming_by_id[key]
-            merged.append(candidate if (user_in_department(user, "pm") or user_can_access_project(user, candidate)) else project)
+            if user_can_edit_projects(user):
+                merged.append(candidate if (user_in_department(user, "pm") or user_can_access_project(user, candidate)) else project)
+            else:
+                item = dict(project)
+                item["schedules"] = merge_schedule_entries_for_user(project, candidate, user)
+                merged.append(item)
             used.add(key)
         else:
             merged.append(project)
     for key, project in incoming_by_id.items():
-        if key not in used and (user_in_department(user, "pm") or user_can_access_project(user, project)):
+        if key not in used and user_can_edit_projects(user) and (user_in_department(user, "pm") or user_can_access_project(user, project)):
             merged.append(project)
     return merged
 
@@ -1252,7 +1382,7 @@ def user_in_department(user, *names):
 
 
 def user_can_view_all_projects(user):
-    return is_admin(user) or user_in_department(user, "경영관리", "영업", "유지보수")
+    return is_admin(user) or user_in_department(user, "경영관리", "영업", "pm")
 
 
 def user_can_edit_projects(user):
@@ -1262,17 +1392,16 @@ def user_can_edit_projects(user):
 def user_assigned_to_project(user, project):
     if not user or not isinstance(project, dict):
         return False
-    name = str(user.get("name") or "").strip().lower()
-    if not name:
+    if not user_match_values(user):
         return False
     if user_in_department(user, "디자인", "디자이너"):
-        return str(project.get("designer") or "").strip().lower() == name
+        return project_staff_matches(user, project, "designer", "designerId")
     if user_in_department(user, "퍼블리싱", "퍼블리셔"):
-        return str(project.get("publisher") or "").strip().lower() == name
+        return project_staff_matches(user, project, "publisher", "publisherId")
     if user_in_department(user, "프로그램", "프로그래머"):
-        return str(project.get("programmer") or "").strip().lower() == name
+        return project_staff_matches(user, project, "programmer", "programmerId")
     if user_in_department(user, "pm"):
-        return str(project.get("pm") or "").strip().lower() == name
+        return project_staff_matches(user, project, "pm", "pmId")
     return False
 
 
@@ -1282,6 +1411,47 @@ def user_match_values(user):
     return {str(user.get("id") or "").strip().lower(), str(user.get("name") or "").strip().lower()} - {""}
 
 
+def project_staff_matches(user, project, name_key, id_key):
+    user_id = str(user.get("id") or "").strip().lower()
+    user_name = str(user.get("name") or "").strip().lower()
+    assigned_id = str(project.get(id_key) or "").strip().lower()
+    assigned_name = str(project.get(name_key) or "").strip().lower()
+    return bool((user_id and assigned_id == user_id) or (user_name and assigned_name == user_name))
+
+
+def user_matches_departments(user, departments):
+    department = normalize_department_key(user.get("department") if user else "")
+    return department in {normalize_department_key(name) for name in departments}
+
+
+def find_staff_user(users, name, departments):
+    value = str(name or "").strip().lower()
+    if not value:
+        return None
+    for user in users:
+        if str(user.get("name") or "").strip().lower() == value and user_matches_departments(user, departments):
+            return user
+    return None
+
+
+def enrich_project_staff_ids(projects, users):
+    enriched = []
+    for project in projects:
+        if not isinstance(project, dict):
+            continue
+        item = dict(project)
+        for name_key, id_key, departments in PROJECT_STAFF_ASSIGNMENTS:
+            assigned_id = str(item.get(id_key) or "").strip()
+            staff_name = str(item.get(name_key) or "").strip()
+            if assigned_id:
+                continue
+            staff = find_staff_user(users, staff_name, departments)
+            if staff and staff.get("id"):
+                item[id_key] = staff["id"]
+        enriched.append(item)
+    return enriched
+
+
 def user_can_access_project(user, project):
     if user_can_view_all_projects(user):
         return True
@@ -1289,7 +1459,7 @@ def user_can_access_project(user, project):
 
 
 def filter_projects_for_user(projects, user):
-    if is_admin(user) or user_in_department(user, "pm"):
+    if user_can_view_all_projects(user):
         return projects
     return [project for project in projects if user_can_access_project(user, project)]
 
@@ -1303,6 +1473,9 @@ def user_payload(user):
         "role": user.get("role", "user"),
         "approvalStatus": user.get("approvalStatus", ""),
         "department": user.get("department", ""),
+        "position": user.get("position", ""),
+        "hireDate": user.get("hireDate", ""),
+        "resignDate": user.get("resignDate", ""),
     }
 
 def is_active_account(row):
@@ -1426,6 +1599,8 @@ VIEW_PAGE_FILES = (
     "vacation_schedule.html",
     "monthly.html",
     "issues.html",
+    "project_completion_approval.html",
+    "project_assignment.html",
     "departments.html",
     "members.html",
     "leave_management.html",
@@ -1542,7 +1717,11 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     user = current_user(self)
                     query = parse_qs(parsed.query)
                     year = query.get("year", [""])[0] or None
-                    return self.write_json({"requests": approved_leave_calendar(conn, year) if user else [], "holidays": company_holidays(conn, year) if user else []})
+                    return self.write_json({
+                        "requests": approved_leave_calendar(conn, year) if user else [],
+                        "holidays": company_holidays(conn, year) if user else [],
+                        "departments": get_departments(conn) if user else [],
+                    })
                 if parsed.path == "/api/login-logs":
                     user = current_user(self)
                     if not user or user.get("role") != "admin":
@@ -1581,6 +1760,7 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     incoming_projects = payload.get("projects") or []
                     if not isinstance(incoming_projects, list):
                         return self.write_error_json("Invalid project payload.", HTTPStatus.BAD_REQUEST)
+                    incoming_projects = enrich_project_staff_ids(incoming_projects, get_user_directory(conn))
                     validate_project_files(incoming_projects)
                     before_projects = records_as_json(conn, "project_records", mode)
                     projects = merge_projects_for_user(before_projects, incoming_projects, user)
@@ -1757,7 +1937,7 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
             return self.write_json({"ok": False, "message": "계정이 비활성화되었습니다. 관리자에게 문의하세요."})
         reset_login_failures()
         if password_needs_rehash(row["password"]):
-            upsert_secure_user(conn, user["id"], hash_password(password), user.get("name", ""), user.get("role", "user"), approval, user.get("department", ""))
+            upsert_secure_user(conn, user["id"], hash_password(password), user.get("name", ""), user.get("role", "user"), approval, user.get("department", ""), user.get("position", ""), user.get("hireDate", ""), user.get("resignDate", ""))
         log_login_attempt(conn, user["id"], user.get("name", ""), user.get("role", "user"), "success", "", ip)
         token = create_session(user)
         return self.write_json({"ok": True, "user": user_payload(user), "token": token, "expiresIn": SESSION_TTL_SECONDS, "users": get_users(conn) if is_admin(user) else []})
@@ -1766,9 +1946,12 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
         user_id = str(payload.get("id") or "").strip()
         password = str(payload.get("password") or "").strip()
         name = str(payload.get("name") or "").strip()
-        role = "admin" if payload.get("role") == "admin" else "user"
+        role = normalize_user_role(payload.get("role"))
         approval = normalize_approval_status(payload.get("approvalStatus"), role)
         department = normalize_department(payload.get("department"))
+        position = str(payload.get("position") or "").strip()[:40]
+        hire_date = str(payload.get("hireDate") or "").strip()[:10]
+        resign_date = str(payload.get("resignDate") or "").strip()[:10]
         if not re.match(r"^[A-Za-z0-9_.@-]{1,80}$", user_id):
             return self.write_json({"ok": False, "message": "아이디 형식이 올바르지 않습니다.", "users": get_users(conn)})
         if not password or not name:
@@ -1779,7 +1962,7 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
             return self.write_json({"ok": False, "message": "기본 관리자 비밀번호는 사용할 수 없습니다.", "users": get_users(conn)})
         if conn.execute("SELECT 1 FROM users_secure WHERE id_lookup = ?", (id_lookup(user_id),)).fetchone():
             return self.write_json({"ok": False, "message": "이미 사용 중인 아이디입니다.", "users": get_users(conn)})
-        upsert_secure_user(conn, user_id, hash_password(password), name[:80], role, approval, department)
+        upsert_secure_user(conn, user_id, hash_password(password), name[:80], role, approval, department, position, hire_date, resign_date)
         conn.commit()
         row = conn.execute("SELECT * FROM users_secure WHERE id_lookup = ?", (id_lookup(user_id),)).fetchone()
         return self.write_json({"ok": True, "user": public_user(row), "users": get_users(conn), "message": "회원이 등록되었습니다."})
@@ -1790,9 +1973,12 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
             return self.write_json({"ok": False, "message": "회원을 찾을 수 없습니다.", "users": get_users(conn)})
         current = public_user(row)
         name = str(payload.get("name") if payload.get("name") is not None else current["name"]).strip()[:80]
-        role = "admin" if payload.get("role") == "admin" else "user"
+        role = normalize_user_role(payload.get("role"))
         approval = normalize_approval_status(payload.get("approvalStatus"), role)
         department = normalize_department(payload.get("department") if payload.get("department") is not None else current.get("department", ""))
+        position = str(payload.get("position") if payload.get("position") is not None else current.get("position", "")).strip()[:40]
+        hire_date = str(payload.get("hireDate") if payload.get("hireDate") is not None else current.get("hireDate", "")).strip()[:10]
+        resign_date = str(payload.get("resignDate") if payload.get("resignDate") is not None else current.get("resignDate", "")).strip()[:10]
         password = row["password"]
         if current["id"].lower() == DEFAULT_ADMIN_ID:
             role = "admin"
@@ -1804,7 +1990,7 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
             if is_default_admin_password(current["id"], new_password):
                 return self.write_json({"ok": False, "message": "기본 관리자 비밀번호는 사용할 수 없습니다.", "users": get_users(conn)})
             password = hash_password(new_password)
-        upsert_secure_user(conn, current["id"], password, name, role, approval, department)
+        upsert_secure_user(conn, current["id"], password, name, role, approval, department, position, hire_date, resign_date)
         conn.commit()
         next_row = conn.execute("SELECT * FROM users_secure WHERE id_lookup = ?", (id_lookup(current["id"]),)).fetchone()
         return self.write_json({"ok": True, "user": public_user(next_row), "users": get_users(conn)})

@@ -37,12 +37,16 @@
             <label>부서
               <select id="memberDepartment" class="member-dialog-select"></select>
             </label>
-            <label>이름<input id="memberName" autocomplete="off" placeholder="이름" /></label>
+            <label>직급
+              <select id="memberPosition" class="member-dialog-select"></select>
+            </label>
           </div>
+          <label class="member-full-field">이름<input id="memberName" autocomplete="off" placeholder="이름" /></label>
           <div class="member-inline-fields">
             <label>권한
               <select id="memberRole" class="member-dialog-select">
                 <option value="user">일반</option>
+                <option value="team_lead">팀장</option>
                 <option value="admin">관리자</option>
               </select>
             </label>
@@ -52,6 +56,10 @@
                 <option value="활성화">재직</option>
               </select>
             </label>
+          </div>
+          <div class="member-inline-fields">
+            <label>입사일<input id="memberHireDate" type="date" /></label>
+            <label>퇴사일<input id="memberResignDate" type="date" /></label>
           </div>
           <button id="memberSubmitBtn" class="primary-btn" type="submit">등록</button>
           <p id="memberMessage"></p>
