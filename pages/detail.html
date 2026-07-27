@@ -9,6 +9,7 @@
             </div>
               <div class="detail-actions">
                 <input id="quoteFile" class="hidden-file" type="file" accept="application/pdf" />
+                <button id="projectCompleteAction" class="ghost-btn project-complete-action hidden" type="button">완료</button>
                 <label id="issueCheckLabel" class="detail-issue-check" title="이슈 체크">
                   <input id="hasIssue" type="checkbox" />
                   <span>이슈</span>
@@ -124,6 +125,17 @@
               </div>
               <div id="communicationList" class="entry-list"></div>
             </section>
+
+            <details class="detail-dropdown project-work-stack-dropdown">
+              <summary>
+                <span class="detail-dropdown-title">프로젝트 작업 스택</span>
+              </summary>
+              <div class="detail-dropdown-body">
+                <div class="detail-schedule-inner">
+                  <div id="projectWorkStackList" class="entry-list"></div>
+                </div>
+              </div>
+            </details>
 
             <div class="sticky-actions">
               <button id="deleteProject" class="ghost-btn danger hidden" type="button">삭제</button>

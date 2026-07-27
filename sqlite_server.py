@@ -56,6 +56,19 @@ PROJECT_STAFF_ASSIGNMENTS = (
     ("publisher", "publisherId", ("퍼블리싱", "퍼블리셔")),
     ("programmer", "programmerId", ("프로그램", "프로그래머")),
 )
+PROJECT_COMPLETION_STAGES = (
+    {"key": "design_worker", "label": "디자인 담당자 완료", "actor": "worker", "departments": ("디자인", "디자이너"), "name_key": "designer", "id_key": "designerId"},
+    {"key": "design_lead", "label": "디자인 팀장 완료", "actor": "lead", "departments": ("디자인", "디자이너")},
+    {"key": "design_pm", "label": "PM 완료", "actor": "pm", "departments": ("pm",), "name_key": "pm", "id_key": "pmId"},
+    {"key": "publishing_ready", "label": "퍼블리싱 팀장 확인", "actor": "lead", "departments": ("퍼블리싱", "퍼블리셔")},
+    {"key": "publishing_worker", "label": "퍼블리싱 담당자 완료", "actor": "worker", "departments": ("퍼블리싱", "퍼블리셔"), "name_key": "publisher", "id_key": "publisherId"},
+    {"key": "publishing_lead", "label": "퍼블리싱 팀장 완료", "actor": "lead", "departments": ("퍼블리싱", "퍼블리셔")},
+    {"key": "publishing_pm", "label": "PM 완료", "actor": "pm", "departments": ("pm",), "name_key": "pm", "id_key": "pmId"},
+    {"key": "program_ready", "label": "프로그램 팀장 확인", "actor": "lead", "departments": ("프로그램", "프로그래머")},
+    {"key": "program_worker", "label": "프로그램 담당자 완료", "actor": "worker", "departments": ("프로그램", "프로그래머"), "name_key": "programmer", "id_key": "programmerId"},
+    {"key": "program_lead", "label": "프로그램 팀장 완료", "actor": "lead", "departments": ("프로그램", "프로그래머")},
+    {"key": "program_pm", "label": "최종 PM 완료", "actor": "pm", "departments": ("pm",), "name_key": "pm", "id_key": "pmId"},
+)
 PDF_DANGEROUS_MARKERS = (
     b"/JavaScript",
     b"/JS",
@@ -1304,9 +1317,157 @@ def merge_projects_for_user(existing_projects, incoming_projects, user):
         else:
             merged.append(project)
     for key, project in incoming_by_id.items():
-        if key not in used and user_can_edit_projects(user) and (user_in_department(user, "pm") or user_can_access_project(user, project)):
+        if key not in used and user_can_create_projects(user):
             merged.append(project)
     return merged
+
+
+def assignment_fields_for_user(user):
+    if is_admin(user):
+        return {
+            ("pm", "pmId"),
+            ("designer", "designerId"),
+            ("publisher", "publisherId"),
+            ("programmer", "programmerId"),
+        }
+    if not is_team_lead(user):
+        return set()
+    if user_in_department(user, "pm"):
+        return {("pm", "pmId")}
+    if user_in_department(user, "디자인", "디자이너"):
+        return {("designer", "designerId")}
+    if user_in_department(user, "퍼블리싱", "퍼블리셔"):
+        return {("publisher", "publisherId")}
+    if user_in_department(user, "프로그램", "프로그래머"):
+        return {("programmer", "programmerId")}
+    return set()
+
+
+def merge_project_assignments_for_user(existing_projects, incoming_projects, user):
+    allowed_fields = assignment_fields_for_user(user)
+    if not allowed_fields:
+        return existing_projects
+    incoming_by_id = {project_identity(project): project for project in incoming_projects if isinstance(project, dict) and project_identity(project)}
+    merged = []
+    for project in existing_projects:
+        key = project_identity(project)
+        candidate = incoming_by_id.get(key)
+        if not candidate:
+            merged.append(project)
+            continue
+        item = dict(project)
+        for name_key, id_key in allowed_fields:
+            item[name_key] = str(candidate.get(name_key) or "").strip()
+            item[id_key] = str(candidate.get(id_key) or "").strip()
+        merged.append(item)
+    return merged
+
+
+def normalize_completion_flow(flow):
+    allowed = {stage["key"] for stage in PROJECT_COMPLETION_STAGES}
+    if not isinstance(flow, dict):
+        flow = {}
+    completed = []
+    for key in flow.get("completed") or []:
+        if key in allowed and key not in completed:
+            completed.append(key)
+    history = flow.get("history") if isinstance(flow.get("history"), list) else []
+    return {"completed": completed, "history": history}
+
+
+def project_completion_stage(project):
+    flow = normalize_completion_flow((project or {}).get("completionFlow"))
+    completed = set(flow["completed"])
+    for stage in PROJECT_COMPLETION_STAGES:
+        if stage["key"] not in completed:
+            return stage
+    return None
+
+
+def last_project_completion_entry(project):
+    history = normalize_completion_flow((project or {}).get("completionFlow")).get("history", [])
+    return history[-1] if history else None
+
+
+def user_already_handled_latest_completion(user, project):
+    latest = last_project_completion_entry(project)
+    return bool(user and latest and str(latest.get("userId") or "") == str(user.get("id") or ""))
+
+
+def user_can_advance_project_completion(user, project, stage=None):
+    if not user or not project:
+        return False
+    stage = stage or project_completion_stage(project)
+    if not stage:
+        return False
+    if is_admin(user):
+        return True
+    actor = stage.get("actor")
+    if actor == "lead":
+        return is_team_lead(user) and user_in_department(user, *stage.get("departments", ()))
+    if actor == "pm":
+        return user_in_department(user, "pm") and (is_team_lead(user) or project_staff_matches(user, project, stage.get("name_key", "pm"), stage.get("id_key", "pmId")))
+    if actor == "worker":
+        return project_staff_matches(user, project, stage.get("name_key", ""), stage.get("id_key", ""))
+    return False
+
+
+def advance_project_completion(project, user):
+    stage = project_completion_stage(project)
+    if not stage:
+        raise ValueError('이미 모든 완료 단계가 처리되었습니다.')
+    if not user_can_advance_project_completion(user, project, stage):
+        raise PermissionError('현재 계정은 이 완료 단계를 처리할 권한이 없습니다.')
+    item = dict(project)
+    flow = normalize_completion_flow(item.get("completionFlow"))
+    flow["completed"].append(stage["key"])
+    flow["history"].append({
+        "id": secrets.token_urlsafe(12),
+        "stage": stage["key"],
+        "label": stage["label"],
+        "userId": str(user.get("id") or ""),
+        "userName": str(user.get("name") or ""),
+        "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "memo": "",
+        "action": "approve",
+        "reason": "",
+    })
+    item["completionFlow"] = flow
+    return item, stage
+
+
+def reject_project_completion(project, user, reason=""):
+    stage = project_completion_stage(project)
+    if not stage:
+        raise ValueError('이미 모든 완료 단계가 처리되었습니다.')
+    if stage.get("actor") == "worker":
+        raise ValueError('반려할 완료 요청이 없습니다.')
+    if not user_can_advance_project_completion(user, project, stage):
+        raise PermissionError('현재 계정은 이 완료 단계를 처리할 권한이 없습니다.')
+    reason = str(reason or "").strip()
+    if not reason:
+        raise ValueError('반려 사유를 입력해 주세요.')
+    item = dict(project)
+    flow = normalize_completion_flow(item.get("completionFlow"))
+    if not flow["completed"]:
+        raise ValueError('반려할 완료 요청이 없습니다.')
+    rejected_key = flow["completed"].pop()
+    rejected_stage = next((item for item in PROJECT_COMPLETION_STAGES if item["key"] == rejected_key), stage)
+    flow["history"].append({
+        "id": secrets.token_urlsafe(12),
+        "stage": stage["key"],
+        "label": f"{stage.get('label', '완료')} 반려",
+        "userId": str(user.get("id") or ""),
+        "userName": str(user.get("name") or ""),
+        "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "memo": "",
+        "action": "reject",
+        "reason": reason,
+        "rejectedStage": rejected_key,
+    })
+    flow["history"] = flow.get("history", [])
+    item["completionFlow"] = flow
+    return item, rejected_stage
 
 
 def cleanup_sessions():
@@ -1360,6 +1521,10 @@ def is_admin(user):
     return bool(user and user.get("role") == "admin")
 
 
+def is_team_lead(user):
+    return bool(user and user.get("role") == "team_lead")
+
+
 def user_department(user):
     return str((user or {}).get("department") or "").strip().lower()
 
@@ -1386,7 +1551,11 @@ def user_can_view_all_projects(user):
 
 
 def user_can_edit_projects(user):
-    return is_admin(user) or user_in_department(user, "영업", "pm", "유지보수")
+    return is_admin(user) or is_team_lead(user) or user_in_department(user, "pm")
+
+
+def user_can_create_projects(user):
+    return is_admin(user) or user_in_department(user, "영업")
 
 
 def user_assigned_to_project(user, project):
@@ -1464,6 +1633,60 @@ def filter_projects_for_user(projects, user):
     return [project for project in projects if user_can_access_project(user, project)]
 
 
+def schedule_project_payload(project):
+    return {
+        "id": project.get("id", ""),
+        "projectNo": project.get("projectNo", ""),
+        "name": project.get("name", ""),
+        "milestone": project.get("milestone", ""),
+        "adminMilestone": project.get("adminMilestone", ""),
+        "pm": project.get("pm", ""),
+        "designer": project.get("designer", ""),
+        "publisher": project.get("publisher", ""),
+        "programmer": project.get("programmer", ""),
+        "schedules": project.get("schedules") or [],
+    }
+
+
+def assignment_project_payload(project):
+    return {
+        "id": project.get("id", ""),
+        "projectNo": project.get("projectNo", ""),
+        "name": project.get("name", ""),
+        "pm": project.get("pm", ""),
+        "pmId": project.get("pmId", ""),
+        "designer": project.get("designer", ""),
+        "designerId": project.get("designerId", ""),
+        "publisher": project.get("publisher", ""),
+        "publisherId": project.get("publisherId", ""),
+        "programmer": project.get("programmer", ""),
+        "programmerId": project.get("programmerId", ""),
+        "completionFlow": project.get("completionFlow") or {},
+    }
+
+
+def filter_schedule_projects_for_user(projects, user):
+    if is_admin(user) or is_team_lead(user):
+        return [schedule_project_payload(project) for project in projects]
+    return [schedule_project_payload(project) for project in projects if user_can_access_project(user, project)]
+
+
+def filter_assignment_projects_for_user(projects, user):
+    if is_admin(user) or is_team_lead(user):
+        return [assignment_project_payload(project) for project in projects]
+    return []
+
+
+def users_for_snapshot(conn, user):
+    users = get_users(conn)
+    if is_admin(user):
+        return users
+    if is_team_lead(user):
+        department = normalize_department_key(user_department(user))
+        return [item for item in users if normalize_department_key(item.get("department", "")) == department]
+    return []
+
+
 def user_payload(user):
     if not user:
         return None
@@ -1524,6 +1747,8 @@ def dataset_snapshot(conn, mode, user=None):
         return {
             "mode": "public",
             "projects": public_sample_projects(),
+            "scheduleProjects": [],
+            "assignmentProjects": [],
             "adminProjects": [],
             "users": [],
             "loginUser": "",
@@ -1533,8 +1758,10 @@ def dataset_snapshot(conn, mode, user=None):
     return {
         "mode": normalized_mode,
         "projects": filter_projects_for_user(projects, user),
+        "scheduleProjects": filter_schedule_projects_for_user(projects, user),
+        "assignmentProjects": filter_assignment_projects_for_user(projects, user),
         "adminProjects": records_as_json(conn, "admin_project_records", normalized_mode) if is_admin(user) else [],
-        "users": get_users(conn) if is_admin(user) else [],
+        "users": users_for_snapshot(conn, user),
         "loginUser": user.get("id", ""),
         "currentUser": user_payload(user),
     }
@@ -1736,6 +1963,8 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     page_size = query.get("pageSize", ["10"])[0]
                     return self.write_json(project_logs(conn, page, page_size))
             return self.write_error_json("Unknown API endpoint.", HTTPStatus.NOT_FOUND)
+        except PermissionError as error:
+            return self.write_error_json(str(error), HTTPStatus.FORBIDDEN)
         except ValueError as error:
             return self.write_error_json(str(error), HTTPStatus.BAD_REQUEST)
         except Exception:
@@ -1771,6 +2000,32 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                         log_project_actions(conn, user, logs)
                     conn.commit()
                     return self.write_json({"ok": True, "logged": len(logs)})
+                if parsed.path == "/api/project-assignments":
+                    mode = normalize_mode(payload.get("mode"))
+                    if mode == "public":
+                        return self.write_json({"ok": True, "sampleOnly": True})
+                    user = current_user(self)
+                    if not (is_admin(user) or is_team_lead(user)):
+                        return self.write_error_json("Admin or team lead login required.", HTTPStatus.UNAUTHORIZED)
+                    incoming_projects = payload.get("projects") or []
+                    if not isinstance(incoming_projects, list):
+                        return self.write_error_json("Invalid project assignment payload.", HTTPStatus.BAD_REQUEST)
+                    incoming_projects = enrich_project_staff_ids(incoming_projects, get_user_directory(conn))
+                    before_projects = records_as_json(conn, "project_records", mode)
+                    projects = merge_project_assignments_for_user(before_projects, incoming_projects, user)
+                    conn.execute("DELETE FROM project_records WHERE mode = ?", (mode,))
+                    insert_projects(conn, mode, projects)
+                    logs = build_project_logs_from_diff(before_projects, projects)
+                    if logs:
+                        log_project_actions(conn, user, logs)
+                    conn.commit()
+                    return self.write_json({
+                        "ok": True,
+                        "logged": len(logs),
+                        "projects": filter_projects_for_user(projects, user),
+                        "scheduleProjects": filter_schedule_projects_for_user(projects, user),
+                        "assignmentProjects": filter_assignment_projects_for_user(projects, user),
+                    })
                 if parsed.path == "/api/admin-projects":
                     mode = normalize_mode(payload.get("mode"))
                     if mode == "public":
@@ -1820,6 +2075,8 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     conn.commit()
                     return self.write_json({"ok": True, "departments": get_departments(conn), "users": get_users(conn)})
             return self.write_error_json("Unknown API endpoint.", HTTPStatus.NOT_FOUND)
+        except PermissionError as error:
+            return self.write_error_json(str(error), HTTPStatus.FORBIDDEN)
         except ValueError as error:
             return self.write_error_json(str(error), HTTPStatus.BAD_REQUEST)
         except Exception:
@@ -1862,12 +2119,44 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     conn.commit()
                     year = leave_year(payload.get("startDate"))
                     return self.write_json({"ok": True, "summary": leave_summary(conn, target_user, year), "requests": user_leave_requests(conn, target_user, year)})
+                if parsed.path == "/api/project-completion":
+                    mode = normalize_mode(payload.get("mode"))
+                    if mode == "public":
+                        return self.write_json({"ok": True, "sampleOnly": True})
+                    user = current_user(self)
+                    if not user:
+                        return self.write_error_json("Login required.", HTTPStatus.UNAUTHORIZED)
+                    project_id = str(payload.get("projectId") or "").strip()
+                    action = str(payload.get("action") or "approve").strip().lower()
+                    before_projects = records_as_json(conn, "project_records", mode)
+                    updated_projects = []
+                    changed_project = None
+                    changed_stage = None
+                    for project in before_projects:
+                        if str(project.get("id") or "") == project_id or str(project.get("projectNo") or "") == project_id:
+                            if action == "reject":
+                                changed_project, changed_stage = reject_project_completion(project, user, payload.get("reason") or "")
+                            else:
+                                changed_project, changed_stage = advance_project_completion(project, user)
+                            updated_projects.append(changed_project)
+                        else:
+                            updated_projects.append(project)
+                    if not changed_project:
+                        return self.write_error_json("Project not found.", HTTPStatus.NOT_FOUND)
+                    conn.execute("DELETE FROM project_records WHERE mode = ?", (mode,))
+                    insert_projects(conn, mode, updated_projects)
+                    log_action = "반려" if action == "reject" else "완료"
+                    log_project_actions(conn, user, [project_log_entry("??", log_action, changed_project, target="???? ??", summary=changed_stage.get("label", log_action))])
+                    conn.commit()
+                    return self.write_json(dataset_snapshot(conn, mode, user))
                 if parsed.path == "/api/project-logs":
                     user = current_user(self)
                     if not user:
                         return self.write_error_json("Login required.", HTTPStatus.UNAUTHORIZED)
                     return self.write_error_json("Project logs are recorded by the server.", HTTPStatus.METHOD_NOT_ALLOWED)
             return self.write_error_json("Unknown API endpoint.", HTTPStatus.NOT_FOUND)
+        except PermissionError as error:
+            return self.write_error_json(str(error), HTTPStatus.FORBIDDEN)
         except ValueError as error:
             return self.write_error_json(str(error), HTTPStatus.BAD_REQUEST)
         except Exception:
@@ -1905,6 +2194,8 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     conn.commit()
                     return self.write_json({"ok": True, "departments": get_departments(conn)})
             return self.write_error_json("Unknown API endpoint.", HTTPStatus.NOT_FOUND)
+        except PermissionError as error:
+            return self.write_error_json(str(error), HTTPStatus.FORBIDDEN)
         except ValueError as error:
             return self.write_error_json(str(error), HTTPStatus.BAD_REQUEST)
         except Exception:

@@ -1598,7 +1598,8 @@ legend {
   margin: 0;
 }
 
-.entry-card-head .project-schedule-head {
+.entry-card-head .project-schedule-head,
+.entry-card-head .project-work-stack-head {
   margin: 0;
 }
 
@@ -1729,6 +1730,8 @@ legend {
 .communication-card .primary-btn,
 .project-schedule-card .ghost-btn,
 .project-schedule-card .primary-btn,
+.project-work-stack-card .ghost-btn,
+.project-work-stack-card .primary-btn,
 .detail-contacts .ghost-btn,
 .detail-contacts .primary-btn {
   min-height: 28px;
@@ -2288,6 +2291,10 @@ body.auth-locked .login-dialog::backdrop {
 
 .management-table-wrap {
   max-height: 520px;
+}
+
+#projectAssignmentView .management-table-wrap {
+  max-height: 700px;
 }
 
 .management-table {
@@ -3425,11 +3432,17 @@ body.detail-open .issue-projects-table tbody tr.selected {
   padding: 0 20px 18px;
 }
 
-.project-schedule-dropdown summary {
+.project-schedule-dropdown summary,
+.project-work-stack-dropdown summary {
   gap: 12px;
 }
 
-.project-schedule-dropdown summary .detail-dropdown-title {
+.project-work-stack-dropdown {
+  border-bottom: 0;
+}
+
+.project-schedule-dropdown summary .detail-dropdown-title,
+.project-work-stack-dropdown summary .detail-dropdown-title {
   flex: 1 1 auto;
 }
 
@@ -3456,7 +3469,12 @@ body.detail-open .issue-projects-table tbody tr.selected {
   cursor: default;
 }
 
-.project-schedule-head {
+.project-work-stack-card {
+  cursor: default;
+}
+
+.project-schedule-head,
+.project-work-stack-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -3514,4 +3532,52 @@ body.detail-open .issue-projects-table tbody tr.selected {
 .department-row .department-color-input,
 .department-row .ghost-btn {
   cursor: auto;
+}
+
+
+.project-complete-action {
+  min-height: 36px;
+  color: #14532d;
+  border-color: rgba(47, 125, 103, 0.35);
+}
+
+.management-table tr[data-project-completion-row] {
+  cursor: pointer;
+}
+
+.management-table tr[data-project-completion-row]:hover {
+  background: #edf7f3;
+}
+
+
+.completion-action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+
+.schedule-staff-badge.is-rejected {
+  color: #b42318;
+  background: #fee4e2;
+  border-color: rgba(180, 35, 24, 0.22);
+}
+
+.project-work-stack-reason {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #111827;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.project-work-stack-reason.is-rejected {
+  color: #111827;
+  background: transparent;
+  border: 0;
 }

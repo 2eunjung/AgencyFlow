@@ -152,6 +152,7 @@ class SQLiteProjectRepository {
     this.apiBase = apiBase;
     this.mode = "public";
     this.projects = [];
+    this.assignmentProjects = [];
     this.adminProjects = [];
     this.usersCache = [];
     this.loginLogsCache = [];
@@ -238,6 +239,8 @@ class SQLiteProjectRepository {
   applySnapshot(snapshot = {}) {
     this.mode = snapshot.mode === "private" ? "private" : "public";
     this.projects = this.clone(snapshot.projects || []);
+    this.scheduleProjects = this.clone(snapshot.scheduleProjects || snapshot.projects || []);
+    this.assignmentProjects = this.clone(snapshot.assignmentProjects || snapshot.projects || []);
     this.adminProjects = this.clone(snapshot.adminProjects || []);
     this.usersCache = this.clone(snapshot.users || []);
     this.loginUser = typeof snapshot.loginUser === "string" ? snapshot.loginUser : "";
@@ -251,6 +254,8 @@ class SQLiteProjectRepository {
   async getSnapshot() {
     return {
       projects: this.clone(this.projects),
+      scheduleProjects: this.clone(this.scheduleProjects || this.projects),
+      assignmentProjects: this.clone(this.assignmentProjects || this.projects),
       adminProjects: this.clone(this.adminProjects),
       loginUser: this.loginUser,
       currentUser: this.currentUser,
@@ -263,6 +268,26 @@ class SQLiteProjectRepository {
       method: "PUT",
       body: JSON.stringify({ mode: this.mode, projects: this.projects }),
     });
+  }
+
+  async saveProjectAssignments(assignments) {
+    const result = await this.api("/project-assignments", {
+      method: "PUT",
+      body: JSON.stringify({ mode: this.mode, projects: this.clone(assignments) }),
+    });
+    if (result.projects) this.projects = this.clone(result.projects);
+    if (result.assignmentProjects) this.assignmentProjects = this.clone(result.assignmentProjects);
+    if (result.scheduleProjects) this.scheduleProjects = this.clone(result.scheduleProjects);
+    return result;
+  }
+
+  async advanceProjectCompletion(projectId, action = "approve", reason = "") {
+    const result = await this.api("/project-completion", {
+      method: "POST",
+      body: JSON.stringify({ mode: this.mode, projectId, action, reason }),
+    });
+    this.applySnapshot(result);
+    return this.getSnapshot();
   }
 
   saveAdminProjects(adminProjects) {
@@ -560,6 +585,8 @@ window.projectRepository = new SQLiteProjectRepository();
 const projectRepository = window.projectRepository;
 
 let projects = [];
+let scheduleProjects = [];
+let assignmentProjects = [];
 let adminProjects = [];
 let currentView = "dashboard";
 let projectLogPage = 1;
@@ -601,6 +628,7 @@ let draftProject = null;
 let editingIssueId = "";
 let editingContactId = "";
 let editingCommunicationId = "";
+let editingProjectWorkStackId = "";
 let scheduleCursor = currentKstYearMonth();
 let scheduleWeekAnchor = todayDate();
 let scheduleDialogEditId = "";
@@ -699,6 +727,7 @@ function normalizeProject(project) {
     clientContacts,
     communications,
     schedules: (project.schedules || []).map((entry) => normalizeScheduleEntry(project, entry)),
+    completionFlow: normalizeProjectCompletionFlow(project.completionFlow),
     pmId: project.pmId || "",
     designerId: project.designerId || "",
     publisherId: project.publisherId || "",
@@ -1147,6 +1176,10 @@ function isAdmin() {
   return currentUser?.role === "admin";
 }
 
+function isTeamLead() {
+  return currentUser?.role === "team_lead";
+}
+
 function roleLabel(role) {
   if (role === "admin") return "관리자";
   if (role === "team_lead") return "팀장";
@@ -1187,25 +1220,37 @@ function canCreateProject() {
 }
 
 function canEditProjectDetail() {
-  return isAdmin() || isDepartment("영업", "pm", "유지보수");
+  return isAdmin() || isTeamLead() || isDepartment("pm");
 }
 
 function canViewMonthlyAndIssues() {
-  return isAdmin() || isDepartment("pm");
+  return isAdmin() || isTeamLead() || isDepartment("pm");
 }
 
 function canViewAllProjectSchedules() {
-  return isAdmin() || isDepartment("pm");
+  return isAdmin() || isTeamLead();
+}
+
+function canManageAllProjectSchedules() {
+  return isAdmin();
 }
 
 function isProjectWorkerDepartment() {
   return isDepartment("디자인", "디자이너", "퍼블리싱", "퍼블리셔", "프로그램", "프로그래머");
 }
 
+function canUseAssignedProjectSchedules() {
+  return isDepartment("pm") || isProjectWorkerDepartment();
+}
+
+function usesFullScheduleDialog() {
+  return isAdmin() || isDepartment("pm");
+}
+
 function canCreateProjectSchedule(project = null) {
   if (!currentUser) return false;
-  if (canViewAllProjectSchedules()) return true;
-  return Boolean(project && isProjectWorkerDepartment() && isAssignedProject(project));
+  if (canManageAllProjectSchedules()) return true;
+  return Boolean(project && canUseAssignedProjectSchedules() && isAssignedProject(project));
 }
 
 function scheduleEntryOwnedByCurrentUser(entry) {
@@ -1221,14 +1266,17 @@ function scheduleEntryOwnedByCurrentUser(entry) {
 function canViewProjectScheduleEntry(entry) {
   if (!currentUser) return false;
   if (canViewAllProjectSchedules()) return true;
-  if (isProjectWorkerDepartment()) return scheduleEntryOwnedByCurrentUser(entry);
+  if (canUseAssignedProjectSchedules()) {
+    const project = projects.find((item) => item.id === entry?.projectId || (entry?.projectNo && String(item.projectNo || "") === String(entry.projectNo)));
+    return project ? isAssignedProject(project) : scheduleEntryOwnedByCurrentUser(entry);
+  }
   return false;
 }
 
 function canManageProjectScheduleEntry(project, entry = null) {
   if (!currentUser) return false;
-  if (canViewAllProjectSchedules()) return true;
-  if (!project || !isProjectWorkerDepartment() || !isAssignedProject(project)) return false;
+  if (canManageAllProjectSchedules()) return true;
+  if (!project || !canUseAssignedProjectSchedules() || !isAssignedProject(project)) return false;
   return entry ? scheduleEntryOwnedByCurrentUser(entry) : true;
 }
 
@@ -1258,6 +1306,94 @@ const PROJECT_STAFF_ASSIGNMENTS = [
   { nameField: "publisher", idField: "publisherId", departments: ["퍼블리싱", "퍼블리셔"] },
   { nameField: "programmer", idField: "programmerId", departments: ["프로그램", "프로그래머"] },
 ];
+
+const PROJECT_COMPLETION_STAGES = [
+  { key: "design_worker", label: "디자인 담당자 완료", actor: "worker", departments: ["디자인", "디자이너"], nameField: "designer", idField: "designerId" },
+  { key: "design_lead", label: "디자인 팀장 완료", actor: "lead", departments: ["디자인", "디자이너"] },
+  { key: "design_pm", label: "PM 완료", actor: "pm", departments: ["pm"], nameField: "pm", idField: "pmId" },
+  { key: "publishing_ready", label: "퍼블리싱 팀장 확인", actor: "lead", departments: ["퍼블리싱", "퍼블리셔"] },
+  { key: "publishing_worker", label: "퍼블리싱 담당자 완료", actor: "worker", departments: ["퍼블리싱", "퍼블리셔"], nameField: "publisher", idField: "publisherId" },
+  { key: "publishing_lead", label: "퍼블리싱 팀장 완료", actor: "lead", departments: ["퍼블리싱", "퍼블리셔"] },
+  { key: "publishing_pm", label: "PM 완료", actor: "pm", departments: ["pm"], nameField: "pm", idField: "pmId" },
+  { key: "program_ready", label: "프로그램 팀장 확인", actor: "lead", departments: ["프로그램", "프로그래머"] },
+  { key: "program_worker", label: "프로그램 담당자 완료", actor: "worker", departments: ["프로그램", "프로그래머"], nameField: "programmer", idField: "programmerId" },
+  { key: "program_lead", label: "프로그램 팀장 완료", actor: "lead", departments: ["프로그램", "프로그래머"] },
+  { key: "program_pm", label: "최종 PM 완료", actor: "pm", departments: ["pm"], nameField: "pm", idField: "pmId" },
+];
+
+function normalizeProjectCompletionFlow(flow = {}) {
+  const allowed = new Set(PROJECT_COMPLETION_STAGES.map((stage) => stage.key));
+  const completed = Array.isArray(flow?.completed) ? flow.completed.filter((key) => allowed.has(key)) : [];
+  const history = Array.isArray(flow?.history) ? flow.history : [];
+  return {
+    completed: [...new Set(completed)],
+    history: history.map((entry) => ({
+      id: String(entry?.id || crypto.randomUUID()),
+      stage: String(entry?.stage || ""),
+      label: String(entry?.label || ""),
+      userId: String(entry?.userId || ""),
+      userName: String(entry?.userName || ""),
+      at: String(entry?.at || ""),
+      memo: String(entry?.memo || ""),
+      action: String(entry?.action || "approve"),
+      reason: String(entry?.reason || ""),
+    })),
+  };
+}
+
+function projectCompletionStage(project) {
+  const flow = normalizeProjectCompletionFlow(project?.completionFlow);
+  const completed = new Set(flow.completed);
+  return PROJECT_COMPLETION_STAGES.find((stage) => !completed.has(stage.key)) || null;
+}
+
+function projectCompletionActorName(project, stage) {
+  if (!stage) return "-";
+  const key = String(stage.key || "");
+  if (key.startsWith("design_")) return project?.designer || "-";
+  if (key.startsWith("publishing_")) return project?.publisher || "-";
+  if (key.startsWith("program_")) return project?.programmer || "-";
+  if (stage.actor === "worker" || stage.actor === "pm") return project?.[stage.nameField] || "-";
+  return "-";
+}
+
+function lastProjectCompletionEntry(project) {
+  const history = normalizeProjectCompletionFlow(project?.completionFlow).history;
+  return history.length ? history[history.length - 1] : null;
+}
+
+function userAlreadyHandledLatestCompletion(project) {
+  const latest = lastProjectCompletionEntry(project);
+  return Boolean(currentUser?.id && latest?.userId && String(latest.userId) === String(currentUser.id));
+}
+
+function userCanActProjectCompletion(project, stage = projectCompletionStage(project)) {
+  if (!currentUser || !project || !stage) return false;
+  if (isAdmin()) return true;
+  if (stage.actor === "lead") return isTeamLead() && stage.departments.some((department) => isDepartment(department));
+  if (stage.actor === "pm") return isDepartment("pm") && (isTeamLead() || projectStaffMatches(project, "pm", "pmId"));
+  if (stage.actor === "worker") return projectStaffMatches(project, stage.nameField, stage.idField);
+  return false;
+}
+
+function projectCompletionSource() {
+  const map = new Map();
+  [...projects, ...assignmentProjects, ...scheduleProjects].forEach((project) => {
+    if (project?.id && !map.has(project.id)) map.set(project.id, project);
+  });
+  return [...map.values()];
+}
+
+function projectCompletionRowsForCurrentUser() {
+  return projectCompletionSource().filter((project) => {
+    const stage = projectCompletionStage(project);
+    return stage?.actor !== "worker" && userCanActProjectCompletion(project, stage);
+  });
+}
+
+function projectCompletionCount() {
+  return projectCompletionRowsForCurrentUser().length;
+}
 
 function userMatchesAnyDepartment(user, departments) {
   const department = normalizeDepartmentKey(user?.department || "");
@@ -1292,12 +1428,12 @@ function isAssignedProject(project) {
 }
 
 function canViewAssignedProjectSchedules() {
-  return isDepartment("디자인", "디자이너", "퍼블리싱", "퍼블리셔", "프로그램", "프로그래머");
+  return canUseAssignedProjectSchedules();
 }
 
 function projectScheduleVisibleProjects() {
   if (!currentUser) return accessibleProjects();
-  if (canViewAllProjectSchedules()) return projects;
+  if (canViewAllProjectSchedules()) return isAdmin() ? projects : scheduleProjects;
   if (canViewAssignedProjectSchedules()) return projects.filter(isAssignedProject);
   return [];
 }
@@ -1328,7 +1464,8 @@ function accessibleProjects() {
 function canAccessView(view) {
   if (view === "members" || view === "departments" || view === "adminSettings" || view === "loginLogs" || view === "projectLogs") return isAdmin();
   if (view === "leaveApprovals") return isAdmin();
-  if (view === "projectCompletionApproval" || view === "projectAssignment") return isAdmin();
+  if (view === "projectCompletionApproval") return Boolean(currentUser);
+  if (view === "projectAssignment") return isAdmin() || isTeamLead();
   if (view === "monthly" || view === "issues") return canViewMonthlyAndIssues();
   if (view === "leaveManagement") return Boolean(currentUser);
   return true;
@@ -1384,9 +1521,19 @@ function restoreUiSessionState() {
   activateViewPanel(currentView);
 }
 
+function updateProjectCompletionNavCount() {
+  const item = document.querySelector('[data-view="projectCompletionApproval"]');
+  if (!item) return;
+  if (!item.dataset.originalLabel) item.dataset.originalLabel = item.textContent.trim();
+  const count = currentUser ? projectCompletionCount() : 0;
+  item.textContent = count > 0 ? `${item.dataset.originalLabel} (${count})` : item.dataset.originalLabel;
+}
+
 function updateNavAccess() {
   document.querySelectorAll(".admin-only").forEach((item) => {
-    item.classList.toggle("hidden", !isAdmin());
+    const view = item.dataset.view || "";
+    const visible = view === "projectAssignment" ? isAdmin() || isTeamLead() : view === "projectCompletionApproval" ? Boolean(currentUser) : isAdmin();
+    item.classList.toggle("hidden", !visible);
   });
   const subtleLockedViews = new Set(["leaveApprovals", "departments", "members"]);
   document.querySelectorAll("[data-auth-menu]").forEach((item) => {
@@ -1408,9 +1555,11 @@ function updateNavAccess() {
   document.querySelectorAll('[data-view="monthly"], [data-view="issues"]').forEach((item) => {
     item.classList.toggle("hidden", !canViewMonthlyAndIssues());
   });
-  if (!isAdmin() && (currentView === "members" || currentView === "departments" || currentView === "adminSettings" || currentView === "loginLogs" || currentView === "projectLogs" || currentView === "leaveApprovals" || currentView === "projectCompletionApproval" || currentView === "projectAssignment")) {
+  if (!isAdmin() && (currentView === "members" || currentView === "departments" || currentView === "adminSettings" || currentView === "loginLogs" || currentView === "projectLogs" || currentView === "leaveApprovals")) {
     switchView("dashboard");
   }
+  if (!currentUser && currentView === "projectCompletionApproval") switchView("dashboard");
+  if (!isAdmin() && !isTeamLead() && currentView === "projectAssignment") switchView("dashboard");
   if (!canViewMonthlyAndIssues() && (currentView === "monthly" || currentView === "issues")) switchView("dashboard");
   if (!currentUser && currentView === "leaveManagement") switchView("dashboard");
 }
@@ -2582,22 +2731,27 @@ function applyReadOnlyUi() {
   const readOnly = isReadOnlyMode();
   const canEdit = !readOnly && canEditProjectDetail();
   const canCreate = !readOnly && canCreateProject();
+  const canWriteProject = isCreatingProject ? canCreate : canEdit;
   const project = selectedProject();
   const canCreateSchedule = canCreateProjectSchedule(project);
+  const completionStage = projectCompletionStage(project);
+  const canCompleteProject = !readOnly && !isCreatingProject && completionStage?.actor === "worker" && userCanActProjectCompletion(project, completionStage);
   const visibilityById = {
     newProject: canCreate,
-    saveDetailBtn: canEdit,
+    saveDetailBtn: canWriteProject,
     deleteProject: isAdmin(),
     addIssue: canEdit,
     addClientContact: canEdit,
     addCommunication: canEdit,
-    addScheduleFromCalendar: Boolean(currentUser && (canViewAllProjectSchedules() || isProjectWorkerDepartment())),
-    addScheduleFromList: Boolean(currentUser && (canViewAllProjectSchedules() || isProjectWorkerDepartment())),
+    projectCompleteAction: canCompleteProject,
+    addScheduleFromCalendar: Boolean(currentUser && (canManageAllProjectSchedules() || canUseAssignedProjectSchedules())),
+    addScheduleFromList: Boolean(currentUser && (canManageAllProjectSchedules() || canUseAssignedProjectSchedules())),
   };
   Object.entries(visibilityById).forEach(([id, visible]) => {
     const element = $(id);
     if (element) element.classList.toggle("hidden", !visible);
   });
+  if ($("projectCompleteAction")) $("projectCompleteAction").textContent = completionStage ? "완료" : "완료";
 
   const quoteAction = $("quoteAction");
   if (quoteAction && !selectedProject()?.quoteFileData) quoteAction.classList.toggle("hidden", !canEdit);
@@ -2616,7 +2770,7 @@ function applyReadOnlyUi() {
   if (!detailForm) return;
   detailForm.querySelectorAll("input, select, textarea").forEach((field) => {
     if (field.id === "detailSearchInput") return;
-    field.disabled = !canEdit;
+    field.disabled = !canWriteProject;
   });
   detailForm.querySelectorAll(".project-schedule-complete-input").forEach((input) => {
     const project = selectedProject();
@@ -2703,12 +2857,15 @@ function renderDetail() {
   if (editingIssueId && !(project.issues || []).some((issue) => issue.id === editingIssueId)) editingIssueId = "";
   if (editingContactId && !(project.clientContacts || []).some((contact) => contact.id === editingContactId)) editingContactId = "";
   if (editingCommunicationId && !(project.communications || []).some((entry) => entry.id === editingCommunicationId)) editingCommunicationId = "";
+  const workStackEntries = normalizeProjectCompletionFlow(project.completionFlow).history;
+  if (editingProjectWorkStackId && !workStackEntries.some((entry) => entry.id === editingProjectWorkStackId)) editingProjectWorkStackId = "";
 
   if (!isCreatingProject) updateDetailBadges(project);
   updateDetailFilledState();
   renderIssues(project);
   renderClientContacts(project);
   renderCommunications(project);
+  renderProjectWorkStack(project);
   renderProjectSchedules(project);
   applyReadOnlyUi();
 }
@@ -3081,6 +3238,153 @@ function renderClientContacts(project) {
 
     if (isEditing) nameInput.focus();
   });
+}
+
+
+function projectWorkStackEntries(project) {
+  return normalizeProjectCompletionFlow(project?.completionFlow).history.sort((a, b) => {
+    const atA = a.at || "";
+    const atB = b.at || "";
+    if (atA === atB) return String(b.id).localeCompare(String(a.id));
+    return atA < atB ? 1 : -1;
+  });
+}
+
+function projectWorkStackStageLabel(entry) {
+  const labels = {
+    design_worker: "디자인 담당자 완료",
+    design_lead: "디자인 팀장 완료",
+    design_pm: "PM 완료",
+    publishing_ready: "퍼블리싱 팀장 확인",
+    publishing_worker: "퍼블리싱 담당자 완료",
+    publishing_lead: "퍼블리싱 팀장 완료",
+    publishing_pm: "PM 완료",
+    program_ready: "프로그램 팀장 확인",
+    program_worker: "프로그램 담당자 완료",
+    program_lead: "프로그램 팀장 완료",
+    program_pm: "최종 PM 완료",
+  };
+  const key = String(entry?.action || "approve") === "reject" ? String(entry?.rejectedStage || entry?.stage || "") : String(entry?.stage || "");
+  const label = labels[key] || String(entry?.label || "").replace(/\?+/g, "").trim() || "작업 완료";
+  return String(entry?.action || "approve") === "reject" ? `${label} 반려` : label;
+}
+
+function projectWorkStackDisplayText(project, entry) {
+  const customMemo = String(entry?.memo || "").trim();
+  const defaultLabel = projectWorkStackStageLabel(entry);
+  if (customMemo && customMemo !== String(entry?.label || "").trim()) return customMemo;
+  const actor = String(entry?.userName || "").trim();
+  return [actor, defaultLabel].filter(Boolean).join(" / ") || defaultLabel;
+}
+
+function projectWorkStackReasonText(entry) {
+  return String(entry?.reason || "").trim();
+}
+
+function isRejectedWorkStackEntry(entry) {
+  return String(entry?.action || "approve") === "reject";
+}
+
+function renderProjectWorkStack(project) {
+  const list = $("projectWorkStackList");
+  if (!list) return;
+  const flow = normalizeProjectCompletionFlow(project?.completionFlow);
+  project.completionFlow = flow;
+  const allEntries = projectWorkStackEntries(project);
+  const entries = allEntries.filter(
+    (entry) =>
+      entry.id === editingProjectWorkStackId ||
+      matchesDetailSearch(entry.at, entry.label, entry.userName, entry.memo, projectWorkStackDisplayText(project, entry))
+  );
+  if (!allEntries.length) {
+    list.innerHTML = '<p class="empty">\ub4f1\ub85d\ub41c \uc791\uc5c5 \uc2a4\ud0dd\uc774 \uc5c6\uc2b5\ub2c8\ub2e4.</p>';
+    return;
+  }
+  if (!entries.length) {
+    list.innerHTML = '<p class="empty">\uac80\uc0c9 \uacb0\uacfc\uac00 \uc5c6\uc2b5\ub2c8\ub2e4.</p>';
+    return;
+  }
+  list.innerHTML = entries
+    .map((entry) => {
+      const isEditing = entry.id === editingProjectWorkStackId;
+      const displayText = projectWorkStackDisplayText(project, entry);
+      const reasonText = projectWorkStackReasonText(entry);
+      const rejected = isRejectedWorkStackEntry(entry);
+      return `
+        <article class="communication-card project-work-stack-card" data-work-stack-id="${escapeAttr(entry.id)}">
+          <div class="communication-view ${isEditing ? "hidden" : ""}">
+            <div class="entry-card-head">
+              <div class="project-work-stack-head entry-card-head-main">
+                <span class="project-schedule-date">${escapeHtml(entry.at || "-")}</span>
+                <span class="schedule-staff-badge ${rejected ? "is-rejected" : ""}">${escapeHtml(displayText)}</span>
+                ${reasonText ? `<span class="project-work-stack-reason ${rejected ? "is-rejected" : ""}">${escapeHtml(reasonText)}</span>` : ""}
+              </div>
+              <div class="entry-card-head-actions ${isAdmin() ? "" : "hidden"}">
+                <button class="ghost-btn work-stack-edit" type="button">수정</button>
+                <button class="ghost-btn danger work-stack-delete" type="button">삭제</button>
+              </div>
+            </div>
+          </div>
+          <div class="issue-edit-panel ${isEditing ? "" : "hidden"}">
+            <div class="communication-edit-grid">
+              <label>일시<input class="work-stack-at" type="datetime-local" value="${escapeAttr(toDateTimeLocalValue(entry.at))}" /></label>
+              <textarea class="work-stack-memo" placeholder="작업 스택 내용을 입력하세요.">${escapeHtml(displayText)}</textarea>
+            </div>
+            <div class="issue-actions">
+              <button class="primary-btn work-stack-save" type="button">저장</button>
+              <button class="ghost-btn work-stack-cancel" type="button">취소</button>
+            </div>
+          </div>
+        </article>`;
+    })
+    .join("");
+
+  list.querySelectorAll(".project-work-stack-card").forEach((card) => {
+    const entry = allEntries.find((item) => item.id === card.dataset.workStackId);
+    if (!entry) return;
+    const view = card.querySelector(".communication-view");
+    const editPanel = card.querySelector(".issue-edit-panel");
+    const atInput = card.querySelector(".work-stack-at");
+    const memoInput = card.querySelector(".work-stack-memo");
+    card.querySelector(".work-stack-edit")?.addEventListener("click", () => {
+      if (!isAdmin()) return;
+      editingProjectWorkStackId = entry.id;
+      renderProjectWorkStack(project);
+    });
+    card.querySelector(".work-stack-cancel")?.addEventListener("click", () => {
+      editingProjectWorkStackId = "";
+      editPanel.classList.add("hidden");
+      view.classList.remove("hidden");
+      renderProjectWorkStack(project);
+    });
+    card.querySelector(".work-stack-save")?.addEventListener("click", () => {
+      if (!isAdmin()) return;
+      entry.at = fromDateTimeLocalValue(atInput.value) || entry.at || "";
+      entry.memo = memoInput.value.trim();
+      editingProjectWorkStackId = "";
+      persistEntry();
+      renderProjectWorkStack(project);
+    });
+    card.querySelector(".work-stack-delete")?.addEventListener("click", () => {
+      if (!isAdmin()) return;
+      project.completionFlow.history = project.completionFlow.history.filter((item) => item.id !== entry.id);
+      editingProjectWorkStackId = "";
+      persistEntry();
+      renderProjectWorkStack(project);
+    });
+  });
+}
+
+function toDateTimeLocalValue(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const normalized = text.replace(" ", "T").slice(0, 16);
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(normalized) ? normalized : "";
+}
+
+function fromDateTimeLocalValue(value) {
+  const text = String(value || "").trim();
+  return text ? text.replace("T", " ") + (text.length === 16 ? ":00" : "") : "";
 }
 
 function renderCommunications(project) {
@@ -3663,17 +3967,24 @@ function closeMemberDialog() {
   $("memberDialog")?.close();
 }
 
+function updateStateFromSnapshot(snapshot = {}, options = {}) {
+  projects = (snapshot.projects || []).map(normalizeProject).filter(hasProjectNo);
+  scheduleProjects = (snapshot.scheduleProjects || snapshot.projects || []).map(normalizeProject).filter(hasProjectNo);
+  assignmentProjects = (snapshot.assignmentProjects || snapshot.projects || []).map(normalizeProject).filter(hasProjectNo);
+  adminProjects = (snapshot.adminProjects || []).filter((project) => project.projectNo);
+  loginUser = snapshot.loginUser || loginUser || "";
+  currentUser = snapshot.currentUser || currentUser || null;
+  mergeAdminFields();
+  if (!options.keepSelected) selectedId = accessibleProjects()[0]?.id || null;
+  else if (selectedId && !detailAccessibleProjects().some((project) => project.id === selectedId)) selectedId = accessibleProjects()[0]?.id || null;
+  syncProjectsPersistSnapshot(projects);
+}
+
 async function applyDatasetMode(mode) {
   const snapshot = await projectRepository.loadDataset(mode);
-  projects = snapshot.projects.map(normalizeProject).filter(hasProjectNo);
-  adminProjects = snapshot.adminProjects.filter((project) => project.projectNo);
-  loginUser = snapshot.loginUser || "";
-  currentUser = snapshot.currentUser || null;
-  mergeAdminFields();
-  selectedId = accessibleProjects()[0]?.id || null;
+  updateStateFromSnapshot(snapshot);
   cancelCreateProject();
   document.body.classList.remove("detail-open", "schedule-detail-open");
-  syncProjectsPersistSnapshot(projects);
   updateAuthUi();
   renderAll();
 }
@@ -5141,7 +5452,6 @@ function renderScheduleCalendarGrid() {
       <span>${cell.day}</span>
       ${visibleEntries.map((entry) => `<div class="schedule-event ${entry.completed ? "is-completed" : ""}" data-schedule-entry-id="${escapeAttr(entry.id)}">
         <strong class="schedule-event-name">${escapeHtml(entry.projectName || "-")}</strong>
-        <small class="schedule-event-meta">${escapeHtml(entry.milestone || "-")} · ${escapeHtml(scheduleStaffBadgeText(entry))}</small>
         <small class="schedule-event-detail">${escapeHtml(entry.detail || "-")}</small>
       </div>`).join("")}
     </button>`);
@@ -5159,7 +5469,7 @@ function renderScheduleCalendarGrid() {
   });
   grid.querySelectorAll("[data-schedule-date]").forEach((item) => {
     item.addEventListener("click", () => {
-      if (!currentUser || (!canViewAllProjectSchedules() && !isProjectWorkerDepartment())) return;
+      if (!currentUser || (!canManageAllProjectSchedules() && !canUseAssignedProjectSchedules())) return;
       openScheduleDialog(item.dataset.scheduleDate);
     });
   });
@@ -5229,7 +5539,7 @@ function renderScheduleViews() {
 }
 
 function findProjectByScheduleInput(projectId) {
-  const source = canViewAllProjectSchedules() ? projects : accessibleProjects();
+  const source = canManageAllProjectSchedules() ? projects : projects.filter(isAssignedProject);
   return source.find((project) => project.id === projectId) || null;
 }
 
@@ -5292,7 +5602,7 @@ function renderScheduleProjectResults() {
 }
 
 function syncScheduleAssignFieldsVisibility() {
-  $("scheduleAssignFields")?.classList.toggle("hidden", !canViewAllProjectSchedules() || !valueOf("scheduleProjectId"));
+  $("scheduleAssignFields")?.classList.toggle("hidden", !usesFullScheduleDialog() || !valueOf("scheduleProjectId"));
 }
 
 function openScheduleDialog(date = todayDate(), options = {}) {
@@ -5304,7 +5614,7 @@ function openScheduleDialog(date = todayDate(), options = {}) {
     ? canManageProjectScheduleEntry(project, editingEntry)
     : project
       ? canCreateProjectSchedule(project)
-      : Boolean(currentUser && (canViewAllProjectSchedules() || isProjectWorkerDepartment()));
+      : Boolean(currentUser && (canManageAllProjectSchedules() || canUseAssignedProjectSchedules()));
   if (!canOpen) {
     alert("현재 계정은 프로젝트 일정을 등록하거나 수정할 권한이 없습니다.");
     return;
@@ -5526,10 +5836,10 @@ function bindScheduleUi() {
   on("scheduleCalendarMonth", "change", renderScheduleCalendarGrid);
   on("scheduleCalendarWeek", "change", renderScheduleCalendarGrid);
   on("addScheduleFromCalendar", "click", () => {
-    if (currentUser && (canViewAllProjectSchedules() || isProjectWorkerDepartment())) openScheduleDialog(dateFromParts(scheduleCursor.year, scheduleCursor.month, 1));
+    if (currentUser && (canManageAllProjectSchedules() || canUseAssignedProjectSchedules())) openScheduleDialog(dateFromParts(scheduleCursor.year, scheduleCursor.month, 1));
   });
   on("addScheduleFromList", "click", () => {
-    if (currentUser && (canViewAllProjectSchedules() || isProjectWorkerDepartment())) openScheduleDialog(scheduleWeekAnchor);
+    if (currentUser && (canManageAllProjectSchedules() || canUseAssignedProjectSchedules())) openScheduleDialog(scheduleWeekAnchor);
   });
   on("closeScheduleDialog", "click", closeScheduleDialog);
   on("scheduleForm", "submit", submitScheduleForm);
@@ -5653,6 +5963,20 @@ const PROJECT_ASSIGNMENT_FILTERS = [
   { id: "projectAssignmentProgrammerFilter", label: "전체 프로그래머", nameField: "programmer", idField: "programmerId", departments: ["프로그램", "프로그래머"] },
 ];
 
+function projectAssignmentSource() {
+  return isAdmin() ? projects : assignmentProjects;
+}
+
+function canManageProjectAssignment() {
+  return isAdmin() || isTeamLead();
+}
+
+function canEditProjectAssignmentField(departments) {
+  if (isAdmin()) return true;
+  if (!isTeamLead()) return false;
+  return departments.some((department) => isDepartment(department));
+}
+
 function staffByDepartments(...departments) {
   const allowed = departments.map((department) => normalizeDepartmentKey(department));
   const users = typeof projectRepository?.getUsers === "function" ? projectRepository.getUsers() : [];
@@ -5663,6 +5987,7 @@ function staffByDepartments(...departments) {
 
 function projectAssignmentSelect(project, nameField, idField, departments) {
   const users = staffByDepartments(...departments);
+  const canEdit = canEditProjectAssignmentField(departments);
   const activeUsers = users.filter((user) => user.approvalStatus === "활성화");
   const inactiveUsers = users.filter((user) => user.approvalStatus !== "활성화");
   const currentId = String(project[idField] || "").trim();
@@ -5683,7 +6008,7 @@ function projectAssignmentSelect(project, nameField, idField, departments) {
   if (currentName && !hasCurrent) {
     options.push(`<option value="${escapeAttr(currentId)}" data-name="${escapeAttr(currentName)}" selected>${escapeHtml(currentName)}</option>`);
   }
-  return `<select class="member-dialog-select" data-project-assignment-id="${escapeAttr(project.id)}" data-project-assignment-field="${escapeAttr(nameField)}" data-project-assignment-id-field="${escapeAttr(idField)}">${options.join("")}</select>`;
+  return `<select class="member-dialog-select" data-project-assignment-id="${escapeAttr(project.id)}" data-project-assignment-field="${escapeAttr(nameField)}" data-project-assignment-id-field="${escapeAttr(idField)}" ${canEdit ? "" : "disabled"}>${options.join("")}</select>`;
 }
 
 function projectAssignmentFilterValue(project, nameField, idField) {
@@ -5705,7 +6030,7 @@ function populateProjectAssignmentFilters() {
       const suffix = user.approvalStatus === "활성화" ? "" : " (퇴사)";
       options.push(`<option value="${escapeAttr(value)}">${escapeHtml(`${user.name || "-"}${suffix}`)}</option>`);
     });
-    [...new Set(projects.map((project) => projectAssignmentFilterValue(project, nameField, idField)).filter(Boolean))].forEach((value) => {
+    [...new Set(projectAssignmentSource().map((project) => projectAssignmentFilterValue(project, nameField, idField)).filter(Boolean))].forEach((value) => {
       if (!seen.has(value)) options.push(`<option value="${escapeAttr(value)}">${escapeHtml(value)}</option>`);
     });
     select.innerHTML = options.join("");
@@ -5715,7 +6040,7 @@ function populateProjectAssignmentFilters() {
 
 function filteredProjectAssignmentRows() {
   const query = valueOf("projectAssignmentSearchInput").trim().toLowerCase();
-  return [...projects].filter(hasProjectNo).filter((project) => {
+  return [...projectAssignmentSource()].filter(hasProjectNo).filter((project) => {
     const haystack = [project.projectNo, project.name].map((value) => String(value || "").toLowerCase()).join(" ");
     if (query && !haystack.includes(query)) return false;
     return PROJECT_ASSIGNMENT_FILTERS.every(({ id, nameField, idField }) => {
@@ -5737,11 +6062,71 @@ function openProjectAssignmentDetail(projectId) {
   saveUiSessionState();
 }
 
+function renderProjectCompletionRows() {
+  const tbody = $("projectCompletionApprovalRows");
+  if (!tbody) return;
+  if (!currentUser) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">로그인 후 확인할 수 있습니다.</td></tr>';
+    return;
+  }
+  const rows = projectCompletionRowsForCurrentUser().sort(compareProjectNo);
+  tbody.innerHTML = rows.length
+    ? rows
+        .map((project) => {
+          const stage = projectCompletionStage(project);
+          return `<tr data-project-completion-row="${escapeAttr(project.id)}" tabindex="0">
+            <td>${escapeHtml(project.projectNo || "-")}</td>
+            <td>${escapeHtml(project.name || "-")}</td>
+            <td>${escapeHtml(projectCompletionActorName(project, stage))}</td>
+            <td>${escapeHtml(stage?.label || "완료")}</td>
+            <td>
+              <div class="completion-action-group">
+                <button class="ghost-btn table-action" type="button" data-project-completion-action="approve" data-project-completion-id="${escapeAttr(project.id)}">승인</button>
+                <button class="ghost-btn danger table-action" type="button" data-project-completion-action="reject" data-project-completion-id="${escapeAttr(project.id)}">반려</button>
+              </div>
+            </td>
+          </tr>`;
+        })
+        .join("")
+    : '<tr><td colspan="5" class="empty-cell">완료 처리할 프로젝트가 없습니다.</td></tr>';
+  tbody.querySelectorAll("[data-project-completion-row]").forEach((row) => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      openProjectDetail(row.dataset.projectCompletionRow);
+    });
+  });
+}
+
+async function completeSelectedProjectStage() {
+  const project = selectedProject();
+  if (!project || !userCanActProjectCompletion(project)) return;
+  if (!confirm("완료 처리하시겠습니까?")) return;
+  await advanceProjectCompletion(project.id, "approve");
+}
+
+async function advanceProjectCompletion(projectId, action = "approve") {
+  try {
+    let reason = "";
+    if (action === "reject") {
+      reason = prompt("반려 사유를 입력해주세요.")?.trim() || "";
+      if (!reason) {
+        alert("반려 사유를 입력해주세요.");
+        return;
+      }
+    }
+    const snapshot = await projectRepository.advanceProjectCompletion(projectId, action, reason);
+    updateStateFromSnapshot(snapshot, { keepSelected: true });
+    renderAll(false);
+  } catch (error) {
+    alert(error?.message || "프로젝트 완료 상태를 저장하지 못했습니다.");
+  }
+}
+
 function renderProjectAssignmentRows() {
   const tbody = $("projectAssignmentRows");
   if (!tbody) return;
-  if (!isAdmin()) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">관리자만 확인할 수 있습니다.</td></tr>';
+  if (!canManageProjectAssignment()) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">관리자 또는 팀장만 확인할 수 있습니다.</td></tr>';
     return;
   }
   populateProjectAssignmentFilters();
@@ -5783,6 +6168,8 @@ function renderAll(includeFilters = true) {
   renderMonthlyRows();
   renderIssueProjectRows();
   renderProjectAssignmentRows();
+  renderProjectCompletionRows();
+  updateProjectCompletionNavCount();
   renderBasicManagement();
   renderDepartments();
   renderLeaveManagement();
@@ -5852,17 +6239,34 @@ document.addEventListener("input", (event) => {
 document.addEventListener("change", (event) => {
   const assignmentSelect = event.target.closest?.("[data-project-assignment-field]");
   if (assignmentSelect) {
-    const project = projects.find((item) => item.id === assignmentSelect.dataset.projectAssignmentId);
-    if (!project || !isAdmin()) return;
+    const fieldConfig = PROJECT_ASSIGNMENT_FILTERS.find(({ nameField, idField }) => nameField === assignmentSelect.dataset.projectAssignmentField && idField === assignmentSelect.dataset.projectAssignmentIdField);
+    if (!fieldConfig || !canEditProjectAssignmentField(fieldConfig.departments)) {
+      renderProjectAssignmentRows();
+      return;
+    }
+    const project = projectAssignmentSource().find((item) => item.id === assignmentSelect.dataset.projectAssignmentId);
+    if (!project || !canManageProjectAssignment()) return;
     const nameField = assignmentSelect.dataset.projectAssignmentField;
     const idField = assignmentSelect.dataset.projectAssignmentIdField;
     const selectedOption = assignmentSelect.selectedOptions?.[0];
     project[idField] = assignmentSelect.value || "";
     project[nameField] = assignmentSelect.value ? selectedOption?.dataset.name || selectedOption?.textContent?.trim() || "" : "";
-    void persist().then(() => {
+    const localProject = projects.find((item) => item.id === project.id);
+    if (localProject) {
+      localProject[idField] = project[idField];
+      localProject[nameField] = project[nameField];
+    }
+    void projectRepository.saveProjectAssignments(projectAssignmentSource()).then((result) => {
+      if (result.projects) projects = result.projects.map(normalizeProject).filter(hasProjectNo);
+      if (result.assignmentProjects) assignmentProjects = result.assignmentProjects.map(normalizeProject).filter(hasProjectNo);
+      if (result.scheduleProjects) scheduleProjects = result.scheduleProjects.map(normalizeProject).filter(hasProjectNo);
       renderRows();
       renderProjectAssignmentRows();
+      renderScheduleViews();
       renderDetail();
+    }).catch((error) => {
+      alert(error?.message || "프로젝트 배정을 저장하지 못했습니다.");
+      renderProjectAssignmentRows();
     });
     return;
   }
@@ -5896,12 +6300,22 @@ on("companyHolidayForm", "submit", saveCompanyHoliday);
 on("companyHolidayDeleteBtn", "click", deleteCompanyHoliday);
 
 document.addEventListener("click", (event) => {
+  const completionTarget = event.target.closest?.("[data-project-completion-action]");
+  if (completionTarget) {
+    void advanceProjectCompletion(completionTarget.dataset.projectCompletionId, completionTarget.dataset.projectCompletionAction || "approve");
+    return;
+  }
   const holidayTarget = event.target.closest?.("[data-company-holiday-id]");
   if (holidayTarget) openCompanyHolidayDialog(holidayTarget.dataset.companyHolidayId);
 });
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
+  const completionTarget = event.target.closest?.("[data-project-completion-action]");
+  if (completionTarget) {
+    void advanceProjectCompletion(completionTarget.dataset.projectCompletionId, completionTarget.dataset.projectCompletionAction || "approve");
+    return;
+  }
   const holidayTarget = event.target.closest?.("[data-company-holiday-id]");
   if (!holidayTarget) return;
   event.preventDefault();
@@ -6002,6 +6416,7 @@ on("addIssue", "click", addIssue);
 on("addClientContact", "click", addClientContact);
 on("addCommunication", "click", addCommunication);
 on("addProjectSchedule", "click", addProjectSchedule);
+on("projectCompleteAction", "click", completeSelectedProjectStage);
 on("quoteFile", "change", handlePdfUpload);
 on("quoteAction", "click", handleQuoteAction);
 on("shortcutAction", "click", () => openProjectLink(selectedProject(), "shortcutUrl"));
@@ -6074,11 +6489,8 @@ async function initializeApp() {
     throw new Error("Project data repository is not configured.");
   }
   const snapshot = await projectRepository.initialize();
-  projects = snapshot.projects.map(normalizeProject).filter(hasProjectNo);
-  adminProjects = snapshot.adminProjects.filter((project) => project.projectNo);
-  loginUser = snapshot.loginUser;
-  currentUser = snapshot.currentUser || (loginUser ? projectRepository.findUser(loginUser) : null);
-  mergeAdminFields();
+  updateStateFromSnapshot(snapshot);
+  currentUser = snapshot.currentUser || (loginUser ? projectRepository.findUser(loginUser) : currentUser);
   restoreLogin();
   selectedId = accessibleProjects()[0]?.id || null;
   restoreUiSessionState();
