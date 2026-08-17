@@ -264,10 +264,12 @@ class SQLiteProjectRepository {
 
   async saveProjects(projects) {
     this.projects = this.clone(projects);
-    await this.api("/projects", {
+    const result = await this.api("/projects", {
       method: "PUT",
       body: JSON.stringify({ mode: this.mode, projects: this.projects }),
     });
+    if (result.projects) this.applySnapshot({ ...result, mode: this.mode });
+    return this.getSnapshot();
   }
 
   async saveProjectAssignments(assignments) {
@@ -281,10 +283,10 @@ class SQLiteProjectRepository {
     return result;
   }
 
-  async advanceProjectCompletion(projectId, action = "approve", reason = "") {
+  async advanceProjectCompletion(projectId, action = "approve", reason = "", completionType = "", memo = "") {
     const result = await this.api("/project-completion", {
       method: "POST",
-      body: JSON.stringify({ mode: this.mode, projectId, action, reason }),
+      body: JSON.stringify({ mode: this.mode, projectId, action, reason, completionType, memo }),
     });
     this.applySnapshot(result);
     return this.getSnapshot();
@@ -622,6 +624,7 @@ let progressStatusFilter = "";
 let milestoneFilter = "";
 let selectedMilestoneFilters = [];
 let selectedStatusFilters = [];
+let selectedProjectOptionFilters = ["excludeClosed"];
 let editingStatusProjectId = "";
 let isCreatingProject = false;
 let draftProject = null;
@@ -694,6 +697,17 @@ function hasProjectNo(project) {
   return String(project.projectNo ?? "").trim() !== "";
 }
 
+function nextProjectNo(projectList = projects) {
+  const used = new Set(
+    (projectList || [])
+      .map((project) => String(project?.projectNo || "").trim())
+      .filter(Boolean)
+  );
+  let number = 0;
+  while (used.has(String(number).padStart(5, "0"))) number += 1;
+  return String(number).padStart(5, "0");
+}
+
 function normalizeProject(project) {
   const clientContacts = project.clientContacts?.length
     ? project.clientContacts
@@ -729,9 +743,13 @@ function normalizeProject(project) {
     schedules: (project.schedules || []).map((entry) => normalizeScheduleEntry(project, entry)),
     completionFlow: normalizeProjectCompletionFlow(project.completionFlow),
     pmId: project.pmId || "",
+    pmAssignedAt: project.pmAssignedAt || "",
     designerId: project.designerId || "",
+    designerAssignedAt: project.designerAssignedAt || "",
     publisherId: project.publisherId || "",
+    publisherAssignedAt: project.publisherAssignedAt || "",
     programmerId: project.programmerId || "",
+    programmerAssignedAt: project.programmerAssignedAt || "",
     monthlyCollection: Boolean(project.monthlyCollection),
     hasLanding: Boolean(project.hasLanding),
     hasIssue: Boolean(project.hasIssue),
@@ -782,14 +800,14 @@ function currentKstYearMonth() {
 }
 
 function issueStatusOptions() {
-  return ["확인 필요", "고객 확인중", "내부 검토중", "장기지연", "해결완료"];
+  return ["확인 필요", "고객 확인중", "내부 검토중", "장기지연", "프로젝트 참고"];
 }
 
 function issueTypeOptions() {
   return ["일정지연", "디자인 컴플레인", "기능 오류", "연락두절", "자료미제공", "피드백 지연"];
 }
 
-function normalizeIssueStatus(value) {
+function normalizeIssueStatus(value, fallback = "확인 필요") {
   const options = issueStatusOptions();
   const raw = String(value || "").trim();
   if (options.includes(raw)) return raw;
@@ -798,11 +816,12 @@ function normalizeIssueStatus(value) {
     진행중: "확인 필요",
     고객확인: "고객 확인중",
     보류: "내부 검토중",
+    해결완료: "프로젝트 참고",
   };
-  return aliases[raw] || "확인 필요";
+  return aliases[raw] || fallback;
 }
 
-function normalizeIssueType(value) {
+function normalizeIssueType(value, fallback = "") {
   const options = issueTypeOptions();
   const raw = String(value || "").trim();
   if (options.includes(raw)) return raw;
@@ -815,24 +834,31 @@ function normalizeIssueType(value) {
     기술: "기능 오류",
     기타: "일정지연",
   };
-  return aliases[raw] || "일정지연";
+  return aliases[raw] || fallback;
 }
 
 function normalizeIssue(issue) {
   const memo = String(issue?.memo || issue?.title || "").trim();
   const createdAt = issue?.createdAt || new Date().toISOString();
-  const status = normalizeIssueStatus(issue?.status);
-  const type = normalizeIssueType(issue?.type);
-  const resolved = Boolean(issue?.resolved) || status === "해결완료";
+  const rawStatus = String(issue?.status || "").trim();
+  const status = normalizeIssueStatus(issue?.status, memo ? "확인 필요" : "");
+  const type = normalizeIssueType(issue?.type, "");
+  const resolved = Boolean(issue?.resolved) || rawStatus === "해결완료";
   return {
     id: String(issue?.id || crypto.randomUUID()),
-    status: resolved ? "해결완료" : status === "해결완료" ? "확인 필요" : status,
+    status: resolved ? "프로젝트 참고" : status,
     type,
     memo,
     date: issue?.date || createdAt.slice(0, 10) || todayDate(),
     createdAt,
+    createdById: issue?.createdById || "",
+    createdByName: issue?.createdByName || "",
     resolved,
   };
+}
+
+function entryAuthorName(entry) {
+  return String(entry?.createdByName || entry?.authorName || entry?.writer || "").trim() || "-";
 }
 
 function isIssueResolved(issue) {
@@ -847,8 +873,12 @@ function latestProjectIssue(project) {
   return issues[0];
 }
 
-function buildIssueFieldOptions(options, selected) {
-  return options.map((option) => `<option value="${escapeAttr(option)}"${option === selected ? " selected" : ""}>${escapeHtml(option)}</option>`).join("");
+function buildIssueFieldOptions(options, selected, placeholder = "값을 선택해 주세요") {
+  const selectedValue = String(selected || "");
+  return [
+    `<option value=""${selectedValue ? "" : " selected"}>${escapeHtml(placeholder)}</option>`,
+    ...options.map((option) => `<option value="${escapeAttr(option)}"${option === selectedValue ? " selected" : ""}>${escapeHtml(option)}</option>`),
+  ].join("");
 }
 
 function mergeAdminFields() {
@@ -1079,7 +1109,8 @@ function buildProjectLogsFromDiff(beforeProjects, afterProjects) {
 }
 
 async function persist() {
-  await projectRepository.saveProjects(projects);
+  const snapshot = await projectRepository.saveProjects(projects);
+  updateStateFromSnapshot(snapshot, { keepSelected: true });
   if (currentView === "projectLogs") {
     projectLogPage = 1;
     await refreshProjectLogs(1);
@@ -1100,12 +1131,13 @@ function selectedProject() {
 }
 
 function createEmptyProject() {
+  const projectNo = nextProjectNo();
   return {
     id: crypto.randomUUID(),
     no: projects.length + 1,
     status: "",
     progressStatus: "",
-    projectNo: "",
+    projectNo,
     name: "",
     contractDate: "",
     dueDate: "",
@@ -1212,7 +1244,7 @@ function isDepartment(...names) {
 }
 
 function canViewAllProjects() {
-  return isAdmin() || isDepartment("경영관리", "영업", "pm");
+  return isAdmin() || isTeamLead() || isDepartment("경영관리", "영업", "pm");
 }
 
 function canCreateProject() {
@@ -1221,6 +1253,26 @@ function canCreateProject() {
 
 function canEditProjectDetail() {
   return isAdmin() || isTeamLead() || isDepartment("pm");
+}
+
+function canEditProjectActivity() {
+  return canEditProjectDetail() || isDepartment("영업");
+}
+
+function canEditProjectIssues() {
+  return isAdmin() || isDepartment("영업", "pm", "디자인", "디자이너", "퍼블리싱", "퍼블리셔", "프로그램", "프로그래머");
+}
+
+function canEditProjectCommunications() {
+  return isAdmin() || isDepartment("영업", "pm");
+}
+
+function canDeleteProjectActivityEntries() {
+  return isAdmin();
+}
+
+function canManageProjectQuote() {
+  return isAdmin() || isDepartment("영업", "경영관리");
 }
 
 function canViewMonthlyAndIssues() {
@@ -1308,17 +1360,15 @@ const PROJECT_STAFF_ASSIGNMENTS = [
 ];
 
 const PROJECT_COMPLETION_STAGES = [
-  { key: "design_worker", label: "디자인 담당자 완료", actor: "worker", departments: ["디자인", "디자이너"], nameField: "designer", idField: "designerId" },
-  { key: "design_lead", label: "디자인 팀장 완료", actor: "lead", departments: ["디자인", "디자이너"] },
-  { key: "design_pm", label: "PM 완료", actor: "pm", departments: ["pm"], nameField: "pm", idField: "pmId" },
-  { key: "publishing_ready", label: "퍼블리싱 팀장 확인", actor: "lead", departments: ["퍼블리싱", "퍼블리셔"] },
-  { key: "publishing_worker", label: "퍼블리싱 담당자 완료", actor: "worker", departments: ["퍼블리싱", "퍼블리셔"], nameField: "publisher", idField: "publisherId" },
-  { key: "publishing_lead", label: "퍼블리싱 팀장 완료", actor: "lead", departments: ["퍼블리싱", "퍼블리셔"] },
-  { key: "publishing_pm", label: "PM 완료", actor: "pm", departments: ["pm"], nameField: "pm", idField: "pmId" },
-  { key: "program_ready", label: "프로그램 팀장 확인", actor: "lead", departments: ["프로그램", "프로그래머"] },
-  { key: "program_worker", label: "프로그램 담당자 완료", actor: "worker", departments: ["프로그램", "프로그래머"], nameField: "programmer", idField: "programmerId" },
-  { key: "program_lead", label: "프로그램 팀장 완료", actor: "lead", departments: ["프로그램", "프로그래머"] },
-  { key: "program_pm", label: "최종 PM 완료", actor: "pm", departments: ["pm"], nameField: "pm", idField: "pmId" },
+  { key: "design_worker", label: "담당자 디자인 완료", actor: "worker", departments: ["디자인", "디자이너"], nameField: "designer", idField: "designerId" },
+  { key: "design_lead", label: "팀장 디자인 완료", actor: "lead", departments: ["디자인", "디자이너"] },
+  { key: "design_pm", label: "PM 디자인 완료", actor: "pm", departments: ["pm"], nameField: "pm", idField: "pmId" },
+  { key: "publishing_worker", label: "담당자 퍼블리싱 완료", actor: "worker", departments: ["퍼블리싱", "퍼블리셔"], nameField: "publisher", idField: "publisherId" },
+  { key: "publishing_lead", label: "팀장 퍼블리싱 완료", actor: "lead", departments: ["퍼블리싱", "퍼블리셔"] },
+  { key: "publishing_pm", label: "PM 퍼블리싱 완료", actor: "pm", departments: ["pm"], nameField: "pm", idField: "pmId" },
+  { key: "program_worker", label: "담당자 프로그램 완료", actor: "worker", departments: ["프로그램", "프로그래머"], nameField: "programmer", idField: "programmerId" },
+  { key: "program_lead", label: "팀장 프로그램 완료", actor: "lead", departments: ["프로그램", "프로그래머"] },
+  { key: "program_pm", label: "PM 프로그램 완료", actor: "pm", departments: ["pm"], nameField: "pm", idField: "pmId" },
 ];
 
 function normalizeProjectCompletionFlow(flow = {}) {
@@ -1327,6 +1377,8 @@ function normalizeProjectCompletionFlow(flow = {}) {
   const history = Array.isArray(flow?.history) ? flow.history : [];
   return {
     completed: [...new Set(completed)],
+    pendingType: String(flow?.pendingType || ""),
+    hideApproval: Boolean(flow?.hideApproval),
     history: history.map((entry) => ({
       id: String(entry?.id || crypto.randomUUID()),
       stage: String(entry?.stage || ""),
@@ -1337,6 +1389,7 @@ function normalizeProjectCompletionFlow(flow = {}) {
       memo: String(entry?.memo || ""),
       action: String(entry?.action || "approve"),
       reason: String(entry?.reason || ""),
+      completionType: String(entry?.completionType || ""),
     })),
   };
 }
@@ -1345,6 +1398,11 @@ function projectCompletionStage(project) {
   const flow = normalizeProjectCompletionFlow(project?.completionFlow);
   const completed = new Set(flow.completed);
   return PROJECT_COMPLETION_STAGES.find((stage) => !completed.has(stage.key)) || null;
+}
+
+function projectCompletionDone(project, ...stageKeys) {
+  const completed = new Set(normalizeProjectCompletionFlow(project?.completionFlow).completed);
+  return stageKeys.every((key) => completed.has(key));
 }
 
 function projectCompletionActorName(project, stage) {
@@ -1386,6 +1444,8 @@ function projectCompletionSource() {
 
 function projectCompletionRowsForCurrentUser() {
   return projectCompletionSource().filter((project) => {
+    const flow = normalizeProjectCompletionFlow(project?.completionFlow);
+    if (flow.hideApproval) return false;
     const stage = projectCompletionStage(project);
     return stage?.actor !== "worker" && userCanActProjectCompletion(project, stage);
   });
@@ -1443,7 +1503,7 @@ function isReadOnlyMode() {
 }
 
 function requireWritableAction() {
-  if (!isReadOnlyMode() && canEditProjectDetail()) return true;
+  if (!isReadOnlyMode() && (canEditProjectDetail() || canEditProjectActivity() || canEditProjectIssues() || canEditProjectCommunications() || canManageProjectQuote() || (isCreatingProject && canCreateProject()))) return true;
   alert(currentUser ? "현재 계정은 프로젝트를 수정할 권한이 없습니다." : "비로그인 상태에서는 읽기 전용으로만 볼 수 있습니다. 수정하려면 로그인해 주세요.");
   return false;
 }
@@ -1461,10 +1521,14 @@ function accessibleProjects() {
   return projects.filter(isAssignedProject);
 }
 
+function canViewProjectCompletionApproval() {
+  return Boolean(currentUser) && (isAdmin() || !isDepartment("영업"));
+}
+
 function canAccessView(view) {
   if (view === "members" || view === "departments" || view === "adminSettings" || view === "loginLogs" || view === "projectLogs") return isAdmin();
   if (view === "leaveApprovals") return isAdmin();
-  if (view === "projectCompletionApproval") return Boolean(currentUser);
+  if (view === "projectCompletionApproval") return canViewProjectCompletionApproval();
   if (view === "projectAssignment") return isAdmin() || isTeamLead();
   if (view === "monthly" || view === "issues") return canViewMonthlyAndIssues();
   if (view === "leaveManagement") return Boolean(currentUser);
@@ -1529,10 +1593,18 @@ function updateProjectCompletionNavCount() {
   item.textContent = count > 0 ? `${item.dataset.originalLabel} (${count})` : item.dataset.originalLabel;
 }
 
+function updateProjectAssignmentNavCount() {
+  const item = document.querySelector('[data-view="projectAssignment"]');
+  if (!item) return;
+  if (!item.dataset.originalLabel) item.dataset.originalLabel = item.textContent.trim();
+  const count = projectAssignmentCount();
+  item.textContent = count > 0 ? `${item.dataset.originalLabel} (${count})` : item.dataset.originalLabel;
+}
+
 function updateNavAccess() {
   document.querySelectorAll(".admin-only").forEach((item) => {
     const view = item.dataset.view || "";
-    const visible = view === "projectAssignment" ? isAdmin() || isTeamLead() : view === "projectCompletionApproval" ? Boolean(currentUser) : isAdmin();
+    const visible = view === "projectAssignment" ? isAdmin() || isTeamLead() : view === "projectCompletionApproval" ? canViewProjectCompletionApproval() : isAdmin();
     item.classList.toggle("hidden", !visible);
   });
   const subtleLockedViews = new Set(["leaveApprovals", "departments", "members"]);
@@ -1558,7 +1630,7 @@ function updateNavAccess() {
   if (!isAdmin() && (currentView === "members" || currentView === "departments" || currentView === "adminSettings" || currentView === "loginLogs" || currentView === "projectLogs" || currentView === "leaveApprovals")) {
     switchView("dashboard");
   }
-  if (!currentUser && currentView === "projectCompletionApproval") switchView("dashboard");
+  if (!canViewProjectCompletionApproval() && currentView === "projectCompletionApproval") switchView("dashboard");
   if (!isAdmin() && !isTeamLead() && currentView === "projectAssignment") switchView("dashboard");
   if (!canViewMonthlyAndIssues() && (currentView === "monthly" || currentView === "issues")) switchView("dashboard");
   if (!currentUser && currentView === "leaveManagement") switchView("dashboard");
@@ -1634,6 +1706,27 @@ function dashboardVisibleMilestones() {
 
 function formatDate(value) {
   return value || "-";
+}
+
+function parseProjectDateValue(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  const normalized = text.includes("T") ? text : text.replace(" ", "T");
+  const date = new Date(normalized);
+  if (!Number.isNaN(date.getTime())) return date;
+  const parts = parseDateParts(text.slice(0, 10));
+  if (!parts) return null;
+  return new Date(parts.year, parts.month - 1, parts.day);
+}
+
+function projectElapsedDays(startValue, endValue) {
+  const start = parseProjectDateValue(startValue);
+  const end = parseProjectDateValue(endValue);
+  if (!start || !end) return null;
+  const startDay = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+  const endDay = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  const diff = Math.floor((endDay - startDay) / 86400000) + 1;
+  return diff > 0 ? diff : 1;
 }
 
 function formatMoney(value) {
@@ -1759,6 +1852,25 @@ function digitsOnly(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
+function formatClientPhone(value) {
+  const digits = digitsOnly(value).slice(0, 11);
+  if (digits.length <= 3) return digits;
+  if (digits.length === 10) return `${digits.slice(0, 2)}-${digits.slice(2, 6)}-${digits.slice(6)}`;
+  if (digits.length >= 11) return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
+  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
+}
+
+function bindClientPhoneInput(input) {
+  if (!input) return;
+  input.addEventListener("input", () => {
+    input.value = formatClientPhone(input.value);
+  });
+  input.addEventListener("blur", () => {
+    input.value = formatClientPhone(input.value);
+  });
+}
+
 function matchedClientContacts(project) {
   const query = valueOf("searchInput").trim();
   const queryDigits = digitsOnly(query);
@@ -1789,6 +1901,45 @@ function renderMatchedClientContacts(project) {
         `<div class="project-contact-line-matched">${escapeHtml(contact.name)} · ${escapeHtml(contact.phones.join(" / "))}</div>`
     )
     .join("")}</div>`;
+}
+
+function projectCompletionEntryAt(project, stageKey) {
+  const completed = new Set(normalizeProjectCompletionFlow(project?.completionFlow).completed);
+  if (!completed.has(stageKey)) return null;
+  return (
+    normalizeProjectCompletionFlow(project?.completionFlow).history
+      .filter((entry) => String(entry?.action || "approve") === "approve" && String(entry?.stage || "") === stageKey)
+      .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")))[0] || null
+  );
+}
+
+function projectPartDurationBadge(project, part) {
+  const config = {
+    pm: { startStage: "program_lead", endStage: "program_pm" },
+    designer: { assignedAt: "designerAssignedAt", endStage: "design_lead", fallbackStartStage: "design_worker" },
+    publisher: { assignedAt: "publisherAssignedAt", endStage: "publishing_lead", fallbackStartStage: "design_pm", secondaryFallbackStartStage: "publishing_worker" },
+    programmer: { assignedAt: "programmerAssignedAt", endStage: "program_lead", fallbackStartStage: "publishing_pm", secondaryFallbackStartStage: "program_worker" },
+  }[part];
+  if (!config) return "";
+  const completedEntry = projectCompletionEntryAt(project, config.endStage);
+  if (!completedEntry?.at) return "";
+  const fallbackStart = config.startStage
+    ? projectCompletionEntryAt(project, config.startStage)?.at
+    : projectCompletionEntryAt(project, config.fallbackStartStage)?.at || projectCompletionEntryAt(project, config.secondaryFallbackStartStage)?.at || "";
+  const assignedAt = config.assignedAt ? project?.[config.assignedAt] : "";
+  const startAt = assignedAt || fallbackStart;
+  const days = projectElapsedDays(startAt, completedEntry.at);
+  if (!days) return "";
+  const startLabel = assignedAt ? "배정일" : "시작일";
+  const endLabel = part === "pm" ? "PM 완료일" : "팀장 완료일";
+  const title = `${startLabel} ${formatDate(String(startAt).slice(0, 10))} · ${endLabel} ${formatDate(String(completedEntry.at).slice(0, 10))}`;
+  return `<span class="staff-duration-badge" title="${escapeAttr(title)}">${days.toLocaleString("ko-KR")}일</span>`;
+}
+
+function projectStaffCell(project, field, part = "") {
+  const name = String(project?.[field] || "").trim();
+  const badge = shouldShowStaffDurationBadges() ? projectPartDurationBadge(project, part) : "";
+  return `<div class="project-staff-cell"><span>${escapeHtml(name || "-")}</span>${badge}</div>`;
 }
 
 function getSelectedMilestoneFilters() {
@@ -1835,13 +1986,54 @@ function updateStatusFilterLabel() {
   label.textContent = `작업상태 ${selected.length}개`;
 }
 
+const PROJECT_OPTION_FILTERS = [
+  { key: "foreign", label: "다국어 여부" },
+  { key: "landing", label: "랜딩 유무" },
+  { key: "designUrl", label: "화면설계 URL 유무" },
+  { key: "excludeClosed", label: "종료 건 제외" },
+  { key: "workSchedule", label: "작업일정" },
+];
+
+function getSelectedProjectOptionFilters() {
+  const menu = $("projectOptionFilterMenu");
+  if (!menu) return selectedProjectOptionFilters;
+  return [...menu.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
+}
+
+function updateProjectOptionFilterLabel() {
+  const selected = getSelectedProjectOptionFilters();
+  selectedProjectOptionFilters = selected;
+  const label = $("projectOptionFilterLabel");
+  if (!label) return;
+  if (!selected.length) {
+    label.textContent = "상세 조건";
+    return;
+  }
+  if (selected.length === 1) {
+    label.textContent = PROJECT_OPTION_FILTERS.find((option) => option.key === selected[0])?.label || "상세 조건";
+    return;
+  }
+  label.textContent = `상세 조건 ${selected.length}개`;
+}
+
+function hasProjectOptionFilter(key) {
+  return selectedProjectOptionFilters.includes(key);
+}
+
+function shouldShowStaffDurationBadges() {
+  return hasProjectOptionFilter("workSchedule");
+}
+
 function setMilestoneFilterOpen(open) {
   const wrap = $("milestoneFilterWrap");
   const toggle = $("milestoneFilterToggle");
   if (!wrap || !toggle) return;
   wrap.classList.toggle("open", open);
   toggle.setAttribute("aria-expanded", open ? "true" : "false");
-  if (open) setStatusFilterOpen(false);
+  if (open) {
+    setStatusFilterOpen(false);
+    setProjectOptionFilterOpen(false);
+  }
 }
 
 function setStatusFilterOpen(open) {
@@ -1853,6 +2045,19 @@ function setStatusFilterOpen(open) {
   if (open) {
     $("milestoneFilterWrap")?.classList.remove("open");
     $("milestoneFilterToggle")?.setAttribute("aria-expanded", "false");
+    setProjectOptionFilterOpen(false);
+  }
+}
+
+function setProjectOptionFilterOpen(open) {
+  const wrap = $("projectOptionFilterWrap");
+  const toggle = $("projectOptionFilterToggle");
+  if (!wrap || !toggle) return;
+  wrap.classList.toggle("open", open);
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) {
+    setMilestoneFilterOpen(false);
+    setStatusFilterOpen(false);
   }
 }
 
@@ -1860,19 +2065,18 @@ function closeListFilterMenus() {
   setMilestoneFilterOpen(false);
   $("statusFilterWrap")?.classList.remove("open");
   $("statusFilterToggle")?.setAttribute("aria-expanded", "false");
+  $("projectOptionFilterWrap")?.classList.remove("open");
+  $("projectOptionFilterToggle")?.setAttribute("aria-expanded", "false");
 }
 
 function resetProjectListFilters() {
   selectedMilestoneFilters = [];
   selectedStatusFilters = [];
+  selectedProjectOptionFilters = ["excludeClosed"];
   progressStatusFilter = "";
   milestoneFilter = "";
   setValue("searchInput", "");
   setValue("pmFilter", "");
-  setChecked("foreignFilter", false);
-  setChecked("landingFilter", false);
-  setChecked("designFilter", false);
-  setChecked("excludeClosedFilter", true);
   closeListFilterMenus();
 }
 
@@ -1887,14 +2091,11 @@ function openProjectsList(options = {}) {
 function applyDashboardMilestoneFilter(milestone) {
   selectedMilestoneFilters = milestone ? [milestone] : [];
   selectedStatusFilters = [];
+  selectedProjectOptionFilters = [];
   progressStatusFilter = "";
   milestoneFilter = "";
   setValue("searchInput", "");
   setValue("pmFilter", "");
-  setChecked("foreignFilter", false);
-  setChecked("landingFilter", false);
-  setChecked("designFilter", false);
-  setChecked("excludeClosedFilter", false);
   closeListFilterMenus();
   switchView("projects");
   renderFilters();
@@ -1923,11 +2124,12 @@ function filteredProjects() {
   const query = valueOf("searchInput").trim().toLowerCase();
   const milestones = getSelectedMilestoneFilters();
   const statuses = getSelectedStatusFilters();
+  const optionFilters = getSelectedProjectOptionFilters();
   const pm = valueOf("pmFilter").trim();
-  const foreignOnly = checkedOf("foreignFilter");
-  const landingOnly = checkedOf("landingFilter");
-  const designOnly = checkedOf("designFilter");
-  const excludeClosed = checkedOf("excludeClosedFilter");
+  const foreignOnly = optionFilters.includes("foreign");
+  const landingOnly = optionFilters.includes("landing");
+  const designOnly = optionFilters.includes("designUrl");
+  const excludeClosed = optionFilters.includes("excludeClosed");
 
   return accessibleProjects().filter((project) => {
     const haystack = buildProjectSearchHaystack(project);
@@ -1997,6 +2199,19 @@ function renderFilters() {
       )
       .join("");
     updateStatusFilterLabel();
+  }
+
+  const selectedOptions = new Set(selectedProjectOptionFilters);
+  if ($("projectOptionFilterMenu")) {
+    $("projectOptionFilterMenu").innerHTML = PROJECT_OPTION_FILTERS.map(
+      (option) => `
+        <label class="multi-select-option">
+          <input type="checkbox" value="${escapeAttr(option.key)}" ${selectedOptions.has(option.key) ? "checked" : ""} />
+          <span>${escapeHtml(option.label)}</span>
+        </label>
+      `
+    ).join("");
+    updateProjectOptionFilterLabel();
   }
 
   if ($("statusList")) $("statusList").innerHTML = workStatusOptions().map((status) => `<option value="${escapeHtml(status)}"></option>`).join("");
@@ -2365,13 +2580,13 @@ function buildQuoteCell(project) {
     const title = project.quoteFileName ? `${project.quoteFileName} 보기` : "견적서 보기";
     return `<button class="quote-download-btn" data-quote-view-id="${project.id}" type="button" title="${escapeAttr(title)}" aria-label="견적서 보기">${QUOTE_DOWNLOAD_ICON}</button>`;
   }
-  if (!canEditProjectDetail()) return '<span class="muted">미등록</span>';
+  if (!canManageProjectQuote()) return '<span class="muted">미등록</span>';
   return `<button class="quote-unregistered" data-quote-upload-project-id="${project.id}" type="button" title="견적서 등록" aria-label="견적서 등록">미등록</button>`;
 }
 
 function findProjectById(id) {
   if (isCreatingProject && draftProject?.id === id) return draftProject;
-  return detailAccessibleProjects().find((item) => item.id === id);
+  return projects.find((item) => item.id === id) || detailAccessibleProjects().find((item) => item.id === id);
 }
 
 function normalizeShortcutUrl(url) {
@@ -2517,10 +2732,10 @@ function renderRows() {
               ? `<button class="badge status-edit ${workStatusBadgeClass(displayStatus)}" data-status-project-id="${project.id}" type="button">${escapeHtml(displayStatus)}</button>`
               : `<span class="badge ${workStatusBadgeClass(displayStatus)}">${escapeHtml(displayStatus)}</span>`
           }</td>
-          <td>${escapeHtml(project.pm || "-")}</td>
-          <td>${escapeHtml(project.designer || "-")}</td>
-          <td>${escapeHtml(project.publisher || "-")}</td>
-          <td>${escapeHtml(project.programmer || "-")}</td>
+          <td>${projectStaffCell(project, "pm", "pm")}</td>
+          <td>${projectStaffCell(project, "designer", "designer")}</td>
+          <td>${projectStaffCell(project, "publisher", "publisher")}</td>
+          <td>${projectStaffCell(project, "programmer", "programmer")}</td>
           <td>${buildShortcutActions(project)}</td>
           <td>${buildQuoteCell(project)}</td>
         </tr>
@@ -2588,11 +2803,18 @@ function parseDateParts(value) {
   };
 }
 
-function isDepositInViewMonth(project, viewDate = new Date()) {
-  const deposit = parseDateParts(project.depositDate);
-  if (!deposit) return false;
+function isCurrentMonthDate(value, viewDate = new Date()) {
+  const date = parseDateParts(value);
+  if (!date) return false;
   const view = viewDateParts(viewDate);
-  return deposit.year === view.year && deposit.month === view.month;
+  return date.year === view.year && date.month === view.month;
+}
+
+function isMonthlyCollectionVisible(project, viewDate = new Date()) {
+  if (!project?.monthlyCollection) return false;
+  const depositDate = String(project.depositDate || "").trim();
+  if (!depositDate) return true;
+  return isCurrentMonthDate(depositDate, viewDate);
 }
 
 function monthlyIssueProjectSource() {
@@ -2601,9 +2823,8 @@ function monthlyIssueProjectSource() {
 
 function monthlyProjects() {
   return monthlyIssueProjectSource().filter((project) => {
-    if (!project.monthlyCollection) return false;
-    // 입금일 없음, 또는 입금일이 조회월(이번 달)인 경우만
-    return !hasDepositDate(project) || isDepositInViewMonth(project);
+    // 당월수금 목록은 오픈일자가 아니라 입금일(수금 완료일) 기준으로만 노출한다.
+    return isMonthlyCollectionVisible(project);
   });
 }
 
@@ -2727,22 +2948,104 @@ function updateDetailHeaderChecks() {
   $("monthlyCollectionLabel")?.classList.toggle("is-active", checkedOf("monthlyCollection"));
 }
 
+function projectCompletionStageType(stage) {
+  const key = String(stage?.key || "");
+  if (key.startsWith("design_")) return "design";
+  if (key.startsWith("publishing_")) return "publishing";
+  if (key.startsWith("program_")) return "program";
+  return "";
+}
+
+function projectCompletionTypeLabel(type) {
+  const labels = {
+    design: "디자인완료",
+    publishing: "퍼블리싱완료",
+    program: "프로그램완료",
+  };
+  return labels[String(type || "")] || "";
+}
+
+function projectCompletionTypeShortLabel(type) {
+  const labels = {
+    design: "디자인",
+    publishing: "퍼블리싱",
+    program: "프로그램",
+  };
+  return labels[String(type || "")] || "";
+}
+
+function projectCompletionProgressLabel(project, stage) {
+  const flow = normalizeProjectCompletionFlow(project?.completionFlow);
+  return projectCompletionTypeLabel(flow.pendingType) || projectCompletionTypeLabel(projectCompletionStageType(stage)) || stage?.label || "완료";
+}
+
+function canOpenProjectCompletionDialog(project = selectedProject()) {
+  const stage = projectCompletionStage(project);
+  if (!currentUser || isReadOnlyMode() || isCreatingProject || stage?.actor !== "worker") return false;
+  if (isAdmin()) return true;
+  return (isDepartment("디자인", "디자이너") || isDepartment("퍼블리싱", "퍼블리셔") || isDepartment("프로그램", "프로그래머")) && userCanActProjectCompletion(project, stage);
+}
+
+function canCompleteProjectFromDetail(project = selectedProject()) {
+  const stage = projectCompletionStage(project);
+  if (!currentUser || isReadOnlyMode() || isCreatingProject || !stage) return false;
+  if (stage.actor === "worker") return canOpenProjectCompletionDialog(project);
+  return userCanActProjectCompletion(project, stage);
+}
+
+function openProjectCompletionDialog() {
+  const project = selectedProject();
+  const stage = projectCompletionStage(project);
+  if (!project || !canOpenProjectCompletionDialog(project)) return;
+  setText("projectCompletionDialogProjectName", project.name || project.projectNo || "");
+  setText("projectCompletionDialogMessage", "");
+  setValue("projectCompletionType", projectCompletionStageType(stage) || "design");
+  setValue("projectCompletionMemo", "");
+  $("projectCompletionDialog")?.showModal();
+}
+
+function closeProjectCompletionDialog() {
+  setText("projectCompletionDialogMessage", "");
+  setValue("projectCompletionMemo", "");
+  $("projectCompletionDialog")?.close();
+}
+
+async function submitProjectCompletionDialog(event) {
+  event.preventDefault();
+  const project = selectedProject();
+  const stage = projectCompletionStage(project);
+  const selectedType = valueOf("projectCompletionType");
+  const memo = valueOf("projectCompletionMemo").trim();
+  if (!project || !stage || !canOpenProjectCompletionDialog(project)) return;
+  if (selectedType !== projectCompletionStageType(stage)) {
+    setText("projectCompletionDialogMessage", "현재 완료 단계와 선택한 완료 구분이 맞지 않습니다.");
+    return;
+  }
+  await advanceProjectCompletion(project.id, "approve", "", selectedType, memo);
+  closeProjectCompletionDialog();
+}
+
 function applyReadOnlyUi() {
   const readOnly = isReadOnlyMode();
   const canEdit = !readOnly && canEditProjectDetail();
+  const canEditActivity = !readOnly && canEditProjectActivity();
+  const canEditIssues = !readOnly && canEditProjectIssues();
+  const canEditCommunications = !readOnly && canEditProjectCommunications();
+  const canDeleteActivityEntries = !readOnly && canDeleteProjectActivityEntries();
+  const canQuote = !readOnly && canManageProjectQuote();
   const canCreate = !readOnly && canCreateProject();
   const canWriteProject = isCreatingProject ? canCreate : canEdit;
   const project = selectedProject();
   const canCreateSchedule = canCreateProjectSchedule(project);
   const completionStage = projectCompletionStage(project);
-  const canCompleteProject = !readOnly && !isCreatingProject && completionStage?.actor === "worker" && userCanActProjectCompletion(project, completionStage);
+  const canCompleteProject = canCompleteProjectFromDetail(project);
   const visibilityById = {
     newProject: canCreate,
     saveDetailBtn: canWriteProject,
     deleteProject: isAdmin(),
-    addIssue: canEdit,
-    addClientContact: canEdit,
-    addCommunication: canEdit,
+    addIssue: canEditIssues,
+    addClientContact: canEditActivity,
+    addCommunication: canEditCommunications,
     projectCompleteAction: canCompleteProject,
     addScheduleFromCalendar: Boolean(currentUser && (canManageAllProjectSchedules() || canUseAssignedProjectSchedules())),
     addScheduleFromList: Boolean(currentUser && (canManageAllProjectSchedules() || canUseAssignedProjectSchedules())),
@@ -2754,7 +3057,7 @@ function applyReadOnlyUi() {
   if ($("projectCompleteAction")) $("projectCompleteAction").textContent = completionStage ? "완료" : "완료";
 
   const quoteAction = $("quoteAction");
-  if (quoteAction && !selectedProject()?.quoteFileData) quoteAction.classList.toggle("hidden", !canEdit);
+  if (quoteAction && !selectedProject()?.quoteFileData) quoteAction.classList.toggle("hidden", !canQuote);
   [
     { id: "shortcutAction", field: "shortcutUrl" },
     { id: "intranetAction", field: "intranetUrl" },
@@ -2770,8 +3073,18 @@ function applyReadOnlyUi() {
   if (!detailForm) return;
   detailForm.querySelectorAll("input, select, textarea").forEach((field) => {
     if (field.id === "detailSearchInput") return;
+    if (field.id === "quoteFile") {
+      field.disabled = !canQuote;
+      return;
+    }
     field.disabled = !canWriteProject;
   });
+  const projectNoField = $("projectNo");
+  if (projectNoField) {
+    projectNoField.readOnly = true;
+    projectNoField.disabled = false;
+    projectNoField.classList.toggle("is-readonly", true);
+  }
   detailForm.querySelectorAll(".project-schedule-complete-input").forEach((input) => {
     const project = selectedProject();
     const entry = project ? (project.schedules || []).find((item) => item.id === input.dataset.scheduleEntryId) : null;
@@ -2783,12 +3096,29 @@ function applyReadOnlyUi() {
     field.readOnly = true;
     field.classList.toggle("is-readonly", true);
   });
-  detailForm.querySelectorAll(".issue-edit, .issue-delete, .issue-save, .issue-cancel").forEach((button) => {
-    button.classList.toggle("hidden", !canEdit);
+  detailForm.querySelectorAll(".issue-edit, .issue-save, .issue-cancel").forEach((button) => {
+    button.classList.toggle("hidden", !canEditIssues);
+  });
+  detailForm.querySelectorAll(".issue-delete").forEach((button) => {
+    button.classList.toggle("hidden", !canDeleteActivityEntries);
   });
   detailForm.querySelectorAll(".issue-complete-input, .issue-edit, .issue-delete, .issue-save, .issue-cancel").forEach((element) => {
-    if (element.matches("input")) element.disabled = !canEdit;
-    else element.classList.toggle("hidden", !canEdit);
+    if (element.matches("input")) element.disabled = !canEditIssues;
+  });
+  detailForm.querySelectorAll(".contact-edit, .contact-delete, .contact-save, .contact-cancel").forEach((button) => {
+    button.classList.toggle("hidden", !canEditActivity);
+  });
+  detailForm.querySelectorAll(".communication-edit, .communication-save, .communication-cancel").forEach((button) => {
+    button.classList.toggle("hidden", !canEditCommunications);
+  });
+  detailForm.querySelectorAll(".communication-delete").forEach((button) => {
+    button.classList.toggle("hidden", !canDeleteActivityEntries);
+  });
+  detailForm.querySelectorAll("#clientContactList input, #clientContactList select, #clientContactList textarea").forEach((field) => {
+    field.disabled = !canEditActivity;
+  });
+  detailForm.querySelectorAll("#issueList input, #issueList select, #issueList textarea, #communicationList input, #communicationList select, #communicationList textarea").forEach((field) => {
+    field.disabled = field.closest("#issueList") ? !canEditIssues : !canEditCommunications;
   });
   detailForm.querySelectorAll("#addProjectSchedule").forEach((element) => {
     element.classList.toggle("hidden", !canCreateSchedule);
@@ -2871,6 +3201,7 @@ function renderDetail() {
 }
 
 function persistEntry() {
+  if (!canEditProjectActivity() && !canEditProjectIssues() && !canEditProjectCommunications() && !isCreatingProject) return Promise.resolve();
   if (!isCreatingProject) return persist();
   return Promise.resolve();
 }
@@ -2891,11 +3222,12 @@ function matchesDetailSearch(...values) {
 
 function toggleIssueResolved(project, issueId, resolved) {
   if (!requireWritableAction()) return false;
+  if (!canEditProjectIssues()) return false;
   const issue = (project.issues || []).find((item) => item.id === issueId);
   if (!issue) return false;
   issue.resolved = Boolean(resolved);
-  if (resolved) issue.status = "해결완료";
-  else if (issue.status === "해결완료") issue.status = "확인 필요";
+  if (resolved) issue.status = "프로젝트 참고";
+  else if (issue.status === "프로젝트 참고" || issue.status === "해결완료") issue.status = "확인 필요";
   void persist();
   renderIssues(project);
   renderIssueProjectRows();
@@ -2928,19 +3260,15 @@ function renderIssues(project) {
       return `
         <article class="issue-card${resolved ? " is-issue-resolved" : ""}" data-issue-id="${issue.id}">
           <div class="issue-view ${isEditing ? "hidden" : ""}">
-            <div class="entry-card-head">
-              <div class="issue-head-main entry-card-head-main">
-                ${
-                  resolved
-                    ? '<span class="issue-complete-status">해결완료</span>'
-                    : `<label class="issue-complete-check check-option">
-                  <input type="checkbox" class="issue-complete-input" data-issue-id="${escapeAttr(issue.id)}" />
-                  <span>해결완료</span>
-                </label>`
-                }
+            <div class="entry-card-head issue-view-head">
+              <div class="issue-head-main entry-card-head-main issue-meta-row">
+                <label class="issue-complete-check check-option" title="프로젝트 참고">
+                  <input type="checkbox" class="issue-complete-input" data-issue-id="${escapeAttr(issue.id)}" ${resolved ? "checked" : ""} />
+                </label>
+                <span class="issue-author">${escapeHtml(entryAuthorName(issue))}</span>
                 <span class="issue-date">${escapeHtml(formatDate(issue.date))}</span>
-                <span class="issue-status-badge">${escapeHtml(issue.status)}</span>
-                <span class="issue-type-badge">${escapeHtml(issue.type)}</span>
+                ${issue.status ? `<span class="issue-status-badge">${escapeHtml(issue.status)}</span>` : ""}
+                ${issue.type ? `<span class="issue-type-badge">${escapeHtml(issue.type)}</span>` : ""}
               </div>
               <div class="entry-card-head-actions">
                 <button class="ghost-btn issue-edit" type="button">수정</button>
@@ -2952,7 +3280,7 @@ function renderIssues(project) {
           <div class="issue-edit-panel ${isEditing ? "" : "hidden"}">
             <div class="issue-edit-fields">
               <label>이슈상태
-                <select class="issue-status-input">${buildIssueFieldOptions(issueStatusOptions(), issue.status)}</select>
+                <select class="issue-status-input" required>${buildIssueFieldOptions(issueStatusOptions(), issue.status)}</select>
               </label>
               <label>이슈유형
                 <select class="issue-type-input">${buildIssueFieldOptions(issueTypeOptions(), issue.type)}</select>
@@ -2989,15 +3317,18 @@ function renderIssues(project) {
     });
 
     card.querySelector(".issue-edit").addEventListener("click", () => {
+      if (!canEditProjectIssues()) return;
       editingIssueId = issue.id;
-      statusInput.value = issue.status;
-      typeInput.value = issue.type;
-      textarea.value = issue.memo || "";
+      const latestIssue = (selectedProject()?.issues || project.issues || []).map(normalizeIssue).find((item) => item.id === issue.id) || issue;
+      statusInput.value = normalizeIssueStatus(latestIssue.status, "");
+      typeInput.value = normalizeIssueType(latestIssue.type, "");
+      textarea.value = latestIssue.memo || "";
       view.classList.add("hidden");
       editPanel.classList.remove("hidden");
       textarea.focus();
     });
     card.querySelector(".issue-cancel").addEventListener("click", () => {
+      if (!canEditProjectIssues()) return;
       if (!issue.memo) {
         project.issues = project.issues.filter((item) => item.id !== issue.id);
         editingIssueId = "";
@@ -3009,28 +3340,36 @@ function renderIssues(project) {
       if (editingIssueId === issue.id) editingIssueId = "";
       editPanel.classList.add("hidden");
       view.classList.remove("hidden");
-      statusInput.value = issue.status;
-      typeInput.value = issue.type;
+      statusInput.value = normalizeIssueStatus(issue.status, "");
+      typeInput.value = normalizeIssueType(issue.type, "");
       textarea.value = issue.memo || "";
     });
-    card.querySelector(".issue-save").addEventListener("click", () => {
+    card.querySelector(".issue-save").addEventListener("click", async () => {
+      if (!canEditProjectIssues()) return;
+      if (!statusInput.value) {
+        alert("이슈상태를 선택해 주세요.");
+        statusInput.focus();
+        return;
+      }
       issue.status = normalizeIssueStatus(statusInput.value);
       issue.type = normalizeIssueType(typeInput.value);
       issue.memo = textarea.value.trim();
       if (!issue.date) issue.date = todayDate();
       if (!issue.createdAt) issue.createdAt = new Date().toISOString();
-      issue.resolved = issue.status === "해결완료";
+      issue.resolved = issue.status === "프로젝트 참고";
       editingIssueId = "";
-      persistEntry();
-      renderIssues(project);
+      await persistEntry();
+      renderIssues(selectedProject() || project);
       renderIssueProjectRows();
     });
-    card.querySelector(".issue-delete").addEventListener("click", () => {
+    card.querySelector(".issue-delete").addEventListener("click", async () => {
+      if (!canDeleteProjectActivityEntries()) return;
       if (!confirm("이 이슈를 삭제할까요?")) return;
-      project.issues = project.issues.filter((item) => item.id !== issue.id);
+      const liveProject = selectedProject()?.id === project.id ? selectedProject() : project;
+      liveProject.issues = (liveProject.issues || []).filter((item) => item.id !== issue.id);
       if (editingIssueId === issue.id) editingIssueId = "";
-      persistEntry();
-      renderIssues(project);
+      await persistEntry();
+      renderIssues(selectedProject() || liveProject);
       renderIssueProjectRows();
     });
 
@@ -3050,7 +3389,9 @@ function requireDetailField(id, message) {
 }
 
 function applyDetailFormToProject(project) {
-  const projectNoRaw = valueOf("projectNo").trim();
+  if (!String(project.projectNo || "").trim()) project.projectNo = nextProjectNo();
+  setValue("projectNo", project.projectNo);
+  const projectNoRaw = String(project.projectNo || valueOf("projectNo")).trim();
   const projectNo = projectNoRaw.replace(/\D/g, "");
   if ($("projectNo") && $("projectNo").value !== projectNo) $("projectNo").value = projectNo;
   if (!projectNo) {
@@ -3168,8 +3509,8 @@ function renderClientContacts(project) {
           <div class="issue-edit-panel ${isEditing ? "" : "hidden"}">
             <div class="entry-edit-grid">
               <label>이름<input class="contact-name" value="${escapeAttr(contact.name || "")}" /></label>
-              <label>회사 연락처<input class="contact-company-phone" value="${escapeAttr(contact.companyPhone || "")}" /></label>
-              <label>개인 연락처<input class="contact-personal-phone" value="${escapeAttr(contact.personalPhone || "")}" /></label>
+              <label>회사 연락처<input class="contact-company-phone" inputmode="numeric" maxlength="13" value="${escapeAttr(formatClientPhone(contact.companyPhone || ""))}" /></label>
+              <label>개인 연락처<input class="contact-personal-phone" inputmode="numeric" maxlength="13" value="${escapeAttr(formatClientPhone(contact.personalPhone || ""))}" /></label>
               <label>이메일<input class="contact-email" type="email" value="${escapeAttr(contact.email || "")}" /></label>
             </div>
             <div class="issue-actions">
@@ -3195,10 +3536,13 @@ function renderClientContacts(project) {
 
     const fillInputs = () => {
       nameInput.value = contact.name || "";
-      companyInput.value = contact.companyPhone || "";
-      personalInput.value = contact.personalPhone || "";
+      companyInput.value = formatClientPhone(contact.companyPhone || "");
+      personalInput.value = formatClientPhone(contact.personalPhone || "");
       emailInput.value = contact.email || "";
     };
+
+    bindClientPhoneInput(companyInput);
+    bindClientPhoneInput(personalInput);
 
     card.querySelector(".contact-edit").addEventListener("click", () => {
       editingContactId = contact.id;
@@ -3220,23 +3564,26 @@ function renderClientContacts(project) {
       editPanel.classList.add("hidden");
       view.classList.remove("hidden");
     });
-    card.querySelector(".contact-save").addEventListener("click", () => {
+    card.querySelector(".contact-save").addEventListener("click", async () => {
       contact.name = nameInput.value.trim();
-      contact.companyPhone = companyInput.value.trim();
-      contact.personalPhone = personalInput.value.trim();
+      contact.companyPhone = formatClientPhone(companyInput.value);
+      contact.personalPhone = formatClientPhone(personalInput.value);
       contact.email = emailInput.value.trim();
       editingContactId = "";
-      persistEntry();
+      await persistEntry();
       renderClientContacts(project);
     });
-    card.querySelector(".contact-delete").addEventListener("click", () => {
+    card.querySelector(".contact-delete").addEventListener("click", async () => {
       project.clientContacts = project.clientContacts.filter((item) => item.id !== contact.id);
       if (editingContactId === contact.id) editingContactId = "";
-      persistEntry();
+      await persistEntry();
       renderClientContacts(project);
     });
 
-    if (isEditing) nameInput.focus();
+    if (isEditing) {
+      fillInputs();
+      nameInput.focus();
+    }
   });
 }
 
@@ -3252,33 +3599,74 @@ function projectWorkStackEntries(project) {
 
 function projectWorkStackStageLabel(entry) {
   const labels = {
-    design_worker: "디자인 담당자 완료",
-    design_lead: "디자인 팀장 완료",
-    design_pm: "PM 완료",
-    publishing_ready: "퍼블리싱 팀장 확인",
-    publishing_worker: "퍼블리싱 담당자 완료",
-    publishing_lead: "퍼블리싱 팀장 완료",
-    publishing_pm: "PM 완료",
-    program_ready: "프로그램 팀장 확인",
-    program_worker: "프로그램 담당자 완료",
-    program_lead: "프로그램 팀장 완료",
-    program_pm: "최종 PM 완료",
+    design_worker: "담당자 디자인 완료",
+    design_lead: "팀장 디자인 완료",
+    design_pm: "PM 디자인 완료",
+    publishing_worker: "담당자 퍼블리싱 완료",
+    publishing_lead: "팀장 퍼블리싱 완료",
+    publishing_pm: "PM 퍼블리싱 완료",
+    program_worker: "담당자 프로그램 완료",
+    program_lead: "팀장 프로그램 완료",
+    program_pm: "PM 프로그램 완료",
   };
   const key = String(entry?.action || "approve") === "reject" ? String(entry?.rejectedStage || entry?.stage || "") : String(entry?.stage || "");
-  const label = labels[key] || String(entry?.label || "").replace(/\?+/g, "").trim() || "작업 완료";
+  const label = labels[key] || String(entry?.label || "").replace(/\?+/g, "").trim() || projectCompletionTypeShortLabel(entry?.completionType) || "작업 완료";
   return String(entry?.action || "approve") === "reject" ? `${label} 반려` : label;
 }
 
+function projectWorkStackType(entry) {
+  const completionType = String(entry?.completionType || "").trim().toLowerCase();
+  if (["design", "publishing", "program"].includes(completionType)) return completionType;
+  const key = String(entry?.rejectedStage || entry?.stage || "");
+  if (key.startsWith("design_")) return "design";
+  if (key.startsWith("publishing_")) return "publishing";
+  if (key.startsWith("program_")) return "program";
+  return "";
+}
+
+function projectWorkStackDepartmentNames(entry) {
+  const type = projectWorkStackType(entry);
+  if (type === "design") return ["디자인", "디자이너"];
+  if (type === "publishing") return ["퍼블리싱", "퍼블리셔"];
+  if (type === "program") return ["프로그램", "프로그래머"];
+  return [];
+}
+
+function departmentColorByNames(names, fallback = "#ccfbf1") {
+  const departments = projectRepository.getDepartments?.() || [];
+  const normalizedNames = names.map((name) => normalizeDepartmentKey(name));
+  const department = departments.find((item) => normalizedNames.includes(normalizeDepartmentKey(item.name)));
+  return normalizeColorValue(department?.color, fallback);
+}
+
+function hexToRgba(hex, alpha = 1) {
+  const color = normalizeColorValue(hex, "#ccfbf1").replace("#", "");
+  const r = parseInt(color.slice(0, 2), 16);
+  const g = parseInt(color.slice(2, 4), 16);
+  const b = parseInt(color.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function projectWorkStackBadgeStyle(entry) {
+  if (isRejectedWorkStackEntry(entry)) return "";
+  const color = departmentColorByNames(projectWorkStackDepartmentNames(entry));
+  return ` style="background:${escapeAttr(color)}; border-color:${escapeAttr(hexToRgba(color, 0.55))}; color:#111827;"`;
+}
+
 function projectWorkStackDisplayText(project, entry) {
-  const customMemo = String(entry?.memo || "").trim();
   const defaultLabel = projectWorkStackStageLabel(entry);
-  if (customMemo && customMemo !== String(entry?.label || "").trim()) return customMemo;
   const actor = String(entry?.userName || "").trim();
   return [actor, defaultLabel].filter(Boolean).join(" / ") || defaultLabel;
 }
 
 function projectWorkStackReasonText(entry) {
   return String(entry?.reason || "").trim();
+}
+
+function projectWorkStackMemoText(entry) {
+  const memo = String(entry?.memo || "").trim();
+  if (!memo || ["design", "publishing", "program"].includes(memo)) return "";
+  return memo;
 }
 
 function isRejectedWorkStackEntry(entry) {
@@ -3309,14 +3697,17 @@ function renderProjectWorkStack(project) {
       const isEditing = entry.id === editingProjectWorkStackId;
       const displayText = projectWorkStackDisplayText(project, entry);
       const reasonText = projectWorkStackReasonText(entry);
+      const memoText = projectWorkStackMemoText(entry);
       const rejected = isRejectedWorkStackEntry(entry);
+      const badgeStyle = projectWorkStackBadgeStyle(entry);
       return `
         <article class="communication-card project-work-stack-card" data-work-stack-id="${escapeAttr(entry.id)}">
           <div class="communication-view ${isEditing ? "hidden" : ""}">
             <div class="entry-card-head">
               <div class="project-work-stack-head entry-card-head-main">
                 <span class="project-schedule-date">${escapeHtml(entry.at || "-")}</span>
-                <span class="schedule-staff-badge ${rejected ? "is-rejected" : ""}">${escapeHtml(displayText)}</span>
+                <span class="schedule-staff-badge ${rejected ? "is-rejected" : ""}"${badgeStyle}>${escapeHtml(displayText)}</span>
+                ${memoText ? `<span class="project-work-stack-memo-text">${escapeHtml(memoText)}</span>` : ""}
                 ${reasonText ? `<span class="project-work-stack-reason ${rejected ? "is-rejected" : ""}">${escapeHtml(reasonText)}</span>` : ""}
               </div>
               <div class="entry-card-head-actions ${isAdmin() ? "" : "hidden"}">
@@ -3328,7 +3719,7 @@ function renderProjectWorkStack(project) {
           <div class="issue-edit-panel ${isEditing ? "" : "hidden"}">
             <div class="communication-edit-grid">
               <label>일시<input class="work-stack-at" type="datetime-local" value="${escapeAttr(toDateTimeLocalValue(entry.at))}" /></label>
-              <textarea class="work-stack-memo" placeholder="작업 스택 내용을 입력하세요.">${escapeHtml(displayText)}</textarea>
+              <textarea class="work-stack-memo" placeholder="작업 스택 내용을 입력하세요.">${escapeHtml(String(entry.memo || "").trim())}</textarea>
             </div>
             <div class="issue-actions">
               <button class="primary-btn work-stack-save" type="button">저장</button>
@@ -3417,7 +3808,7 @@ function renderCommunications(project) {
       return `
         <article class="communication-card" data-communication-id="${entry.id}">
           <div class="communication-view ${isEditing ? "hidden" : ""}">
-            <p class="entry-meta">${escapeHtml(dateText)}</p>
+            <p class="entry-meta">${escapeHtml(entryAuthorName(entry))} ${escapeHtml(dateText)}</p>
             <p class="issue-text">${escapeHtml(memoText || "내용 없음")}</p>
             <div class="issue-actions">
               <button class="ghost-btn communication-edit" type="button">수정</button>
@@ -3454,6 +3845,7 @@ function renderCommunications(project) {
     };
 
     card.querySelector(".communication-edit").addEventListener("click", () => {
+      if (!canEditProjectCommunications()) return;
       editingCommunicationId = entry.id;
       fillInputs();
       view.classList.add("hidden");
@@ -3461,6 +3853,7 @@ function renderCommunications(project) {
       memoInput.focus();
     });
     card.querySelector(".communication-cancel").addEventListener("click", () => {
+      if (!canEditProjectCommunications()) return;
       if (!String(entry.memo || "").trim()) {
         project.communications = project.communications.filter((item) => item.id !== entry.id);
         editingCommunicationId = "";
@@ -3474,6 +3867,7 @@ function renderCommunications(project) {
       view.classList.remove("hidden");
     });
     card.querySelector(".communication-save").addEventListener("click", () => {
+      if (!canEditProjectCommunications()) return;
       entry.date = dateInput.value || todayDate();
       entry.memo = memoInput.value.trim();
       editingCommunicationId = "";
@@ -3481,6 +3875,7 @@ function renderCommunications(project) {
       renderCommunications(project);
     });
     card.querySelector(".communication-delete").addEventListener("click", () => {
+      if (!canDeleteProjectActivityEntries()) return;
       project.communications = project.communications.filter((item) => item.id !== entry.id);
       if (editingCommunicationId === entry.id) editingCommunicationId = "";
       persistEntry();
@@ -3493,7 +3888,7 @@ function renderCommunications(project) {
 
 function addProject() {
   if (!canCreateProject()) {
-    alert("프로젝트 추가는 관리자와 영업 부서만 할 수 있습니다.");
+    alert("프로젝트 추가는 영업 부서만 할 수 있습니다.");
     return;
   }
   isCreatingProject = true;
@@ -3517,7 +3912,7 @@ function addProject() {
   renderRows();
   renderDetail();
   saveUiSessionState();
-  $("projectNo")?.focus();
+  $("name")?.focus();
 }
 
 function deleteSelectedProject() {
@@ -3549,6 +3944,7 @@ function deleteSelectedProject() {
 
 function addIssue() {
   if (!requireWritableAction()) return;
+  if (!canEditProjectIssues()) return;
   const project = selectedProject();
   if (!project) return;
   project.issues = project.issues || [];
@@ -3556,11 +3952,13 @@ function addIssue() {
   project.issues.unshift(
     normalizeIssue({
       id,
-      status: "확인 필요",
-      type: "일정지연",
+      status: "",
+      type: "",
       memo: "",
       date: todayDate(),
       createdAt: new Date().toISOString(),
+      createdById: assignedProjectUserId(),
+      createdByName: assignedProjectUserName(),
       resolved: false,
     })
   );
@@ -3571,6 +3969,7 @@ function addIssue() {
 
 function addClientContact() {
   if (!requireWritableAction()) return;
+  if (!canEditProjectActivity() && !isCreatingProject) return;
   const project = selectedProject();
   if (!project) return;
   project.clientContacts = project.clientContacts || [];
@@ -3583,12 +3982,12 @@ function addClientContact() {
     email: "",
   });
   editingContactId = id;
-  if (!isCreatingProject) void persist();
   renderClientContacts(project);
 }
 
 function addCommunication() {
   if (!requireWritableAction()) return;
+  if (!canEditProjectCommunications()) return;
   const project = selectedProject();
   if (!project) return;
   project.communications = project.communications || [];
@@ -3597,6 +3996,8 @@ function addCommunication() {
     id,
     date: todayDate(),
     memo: "",
+    createdById: assignedProjectUserId(),
+    createdByName: assignedProjectUserName(),
   });
   editingCommunicationId = id;
   if (!isCreatingProject) void persist();
@@ -3642,9 +4043,10 @@ function readFileAsDataUrl(file) {
 }
 
 async function handlePdfUpload(event) {
-  if (!requireWritableAction()) {
+  if (!canManageProjectQuote() || !requireWritableAction()) {
     quoteUploadProjectId = "";
     if (event?.target) event.target.value = "";
+    if (!canManageProjectQuote()) alert("현재 계정은 견적서를 등록할 권한이 없습니다.");
     return;
   }
   const file = event.target.files?.[0];
@@ -3685,6 +4087,10 @@ function handleQuoteAction() {
   const project = selectedProject();
   if (project?.quoteFileData) {
     viewQuoteForProject(project);
+    return;
+  }
+  if (!canManageProjectQuote()) {
+    alert("현재 계정은 견적서를 등록할 권한이 없습니다.");
     return;
   }
   quoteUploadProjectId = "";
@@ -3863,9 +4269,15 @@ function isValidPassword(password) {
 let memberDialogMode = "create";
 let editingMemberId = "";
 const POSITION_OPTIONS = ["사원", "주임", "대리", "과장", "차장", "부장", "이사", "상무", "대표"];
+const MEMBER_DEPARTMENT_EXCLUDED_NAMES = new Set(["유지보수"]);
+
+function memberDepartmentOptionsSource() {
+  // 현재 프로젝트 범위에서는 회원 부서 선택지에서 유지보수를 제외한다.
+  return (projectRepository.getDepartments?.() || []).filter((department) => !MEMBER_DEPARTMENT_EXCLUDED_NAMES.has(department.name || ""));
+}
 
 function departmentOptions(selected = "") {
-  const departments = projectRepository.getDepartments?.() || [];
+  const departments = memberDepartmentOptionsSource();
   return departments
     .map((department) => {
       const name = department.name || "";
@@ -4277,7 +4689,7 @@ function renderMemberDepartmentFilter() {
   const select = $("memberDepartmentFilter");
   if (!select) return;
   const selected = select.value || "";
-  const departments = projectRepository.getDepartments?.() || [];
+  const departments = memberDepartmentOptionsSource();
   select.innerHTML = `<option value="">전체 부서</option>${departments
     .map((department) => `<option value="${escapeAttr(department.name || "")}">${escapeHtml(department.name || "")}</option>`)
     .join("")}`;
@@ -4292,6 +4704,48 @@ function filterMembers(users) {
     const matchesDepartment = !department || user.department === department;
     return matchesQuery && matchesDepartment;
   });
+}
+
+function memberExcelRow(user) {
+  return [
+    excelCell(user.id),
+    excelCell(user.name),
+    excelCell(user.department),
+    excelCell(user.position),
+    excelCell(roleLabel(user.role)),
+    excelCell(employmentStatusLabel(user.approvalStatus)),
+    excelCell(user.hireDate),
+    excelCell(user.resignDate),
+  ].join("");
+}
+
+function downloadMembersExcel() {
+  if (!isAdmin()) return;
+  const users = typeof projectRepository?.getUsers === "function" ? projectRepository.getUsers() : [];
+  const rows = filterMembers(users);
+  if (!rows.length) {
+    alert("다운로드할 회원 목록이 없습니다.");
+    return;
+  }
+  const headers = ["아이디", "이름", "부서", "직급", "권한", "재직여부", "입사일", "퇴사일"];
+  const headerRow = `<Row>${headers.map((header) => excelCell(header)).join("")}</Row>`;
+  const dataRows = rows.map((user) => `<Row>${memberExcelRow(user)}</Row>`).join("");
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+ <Worksheet ss:Name="회원 목록">
+  <Table>
+   ${headerRow}
+   ${dataRows}
+  </Table>
+ </Worksheet>
+</Workbook>`;
+  const blob = new Blob([`\uFEFF${xml}`], { type: "application/vnd.ms-excel;charset=utf-8;" });
+  triggerDownload(blob, `회원_목록_${downloadStamp()}.xls`);
 }
 
 function renderDepartments() {
@@ -5895,6 +6349,14 @@ async function refreshLoginLogs() {
   }
 }
 
+function projectLogActionClass(action) {
+  const value = String(action || "").trim();
+  if (value === "등록") return "log-action-create";
+  if (value === "수정") return "log-action-update";
+  if (value === "삭제") return "log-action-delete";
+  return "pending";
+}
+
 function renderProjectLogs() {
   const tbody = $("projectLogRows");
   if (!tbody || !currentUser) return;
@@ -5904,7 +6366,7 @@ function renderProjectLogs() {
         <td>${escapeHtml(log.userId || "-")}</td>
         <td>${escapeHtml(log.name || "-")}</td>
         <td>${escapeHtml(log.category || "-")}</td>
-        <td><span class="status-badge pending">${escapeHtml(log.action || "-")}</span></td>
+        <td><span class="status-badge ${projectLogActionClass(log.action)}">${escapeHtml(log.action || "-")}</span></td>
         <td>${escapeHtml(log.projectNo || "-")}</td>
         <td>${escapeHtml(log.projectName || "-")}</td>
         <td class="project-log-summary-cell">${escapeHtml(log.summary || "-")}</td>
@@ -5967,8 +6429,70 @@ function projectAssignmentSource() {
   return isAdmin() ? projects : assignmentProjects;
 }
 
+function projectAssignmentSaveSource() {
+  return isAdmin() ? projects : assignmentProjects;
+}
+
 function canManageProjectAssignment() {
   return isAdmin() || isTeamLead();
+}
+
+function projectAssignmentMissing(project, nameField, idField) {
+  return !String(project?.[idField] || project?.[nameField] || "").trim();
+}
+
+function projectNeedsAssignmentForDepartments(project, departments) {
+  const normalized = departments.map((department) => normalizeDepartmentKey(department));
+  if (normalized.includes("pm")) {
+    return projectAssignmentMissing(project, "pm", "pmId");
+  }
+  if (normalized.includes("디자인")) {
+    return !projectAssignmentMissing(project, "pm", "pmId") && projectAssignmentMissing(project, "designer", "designerId");
+  }
+  if (normalized.includes("퍼블리싱")) {
+    return projectCompletionDone(project, "design_worker", "design_lead", "design_pm") && projectAssignmentMissing(project, "publisher", "publisherId");
+  }
+  if (normalized.includes("프로그램")) {
+    return projectCompletionDone(project, "publishing_worker", "publishing_lead", "publishing_pm") && projectAssignmentMissing(project, "programmer", "programmerId");
+  }
+  return false;
+}
+
+function currentAssignmentDepartments() {
+  if (isDepartment("pm")) return ["pm"];
+  if (isDepartment("디자인", "디자이너")) return ["디자인", "디자이너"];
+  if (isDepartment("퍼블리싱", "퍼블리셔")) return ["퍼블리싱", "퍼블리셔"];
+  if (isDepartment("프로그램", "프로그래머")) return ["프로그램", "프로그래머"];
+  return [];
+}
+
+function projectNeedsAssignmentForCurrentUser(project) {
+  if (isAdmin()) return true;
+  if (!isTeamLead()) return false;
+  const departments = currentAssignmentDepartments();
+  return departments.length ? projectNeedsAssignmentForDepartments(project, departments) : false;
+}
+
+function projectAssignmentCount() {
+  if (!currentUser || !isTeamLead() || isAdmin()) return 0;
+  return assignmentProjects.filter(hasProjectNo).filter(projectNeedsAssignmentForCurrentUser).length;
+}
+
+function projectAssignmentPending(project) {
+  if (isAdmin()) {
+    return projectAssignmentMissing(project, "pm", "pmId")
+      || projectAssignmentMissing(project, "designer", "designerId")
+      || projectAssignmentMissing(project, "publisher", "publisherId")
+      || projectAssignmentMissing(project, "programmer", "programmerId");
+  }
+  return projectNeedsAssignmentForCurrentUser(project);
+}
+
+function compareProjectAssignmentRows(a, b) {
+  const pendingA = projectAssignmentPending(a);
+  const pendingB = projectAssignmentPending(b);
+  if (pendingA !== pendingB) return pendingA ? -1 : 1;
+  return compareProjectNo(a, b);
 }
 
 function canEditProjectAssignmentField(departments) {
@@ -6078,7 +6602,7 @@ function renderProjectCompletionRows() {
             <td>${escapeHtml(project.projectNo || "-")}</td>
             <td>${escapeHtml(project.name || "-")}</td>
             <td>${escapeHtml(projectCompletionActorName(project, stage))}</td>
-            <td>${escapeHtml(stage?.label || "완료")}</td>
+            <td>${escapeHtml(projectCompletionProgressLabel(project, stage))}</td>
             <td>
               <div class="completion-action-group">
                 <button class="ghost-btn table-action" type="button" data-project-completion-action="approve" data-project-completion-id="${escapeAttr(project.id)}">승인</button>
@@ -6097,14 +6621,19 @@ function renderProjectCompletionRows() {
   });
 }
 
-async function completeSelectedProjectStage() {
+function completeSelectedProjectStage() {
   const project = selectedProject();
-  if (!project || !userCanActProjectCompletion(project)) return;
+  const stage = projectCompletionStage(project);
+  if (!project || !stage || !canCompleteProjectFromDetail(project)) return;
+  if (stage.actor === "worker") {
+    openProjectCompletionDialog();
+    return;
+  }
   if (!confirm("완료 처리하시겠습니까?")) return;
-  await advanceProjectCompletion(project.id, "approve");
+  void advanceProjectCompletion(project.id, "approve");
 }
 
-async function advanceProjectCompletion(projectId, action = "approve") {
+async function advanceProjectCompletion(projectId, action = "approve", completionType = "", memo = "") {
   try {
     let reason = "";
     if (action === "reject") {
@@ -6114,7 +6643,7 @@ async function advanceProjectCompletion(projectId, action = "approve") {
         return;
       }
     }
-    const snapshot = await projectRepository.advanceProjectCompletion(projectId, action, reason);
+    const snapshot = await projectRepository.advanceProjectCompletion(projectId, action, reason, completionType, memo);
     updateStateFromSnapshot(snapshot, { keepSelected: true });
     renderAll(false);
   } catch (error) {
@@ -6130,11 +6659,11 @@ function renderProjectAssignmentRows() {
     return;
   }
   populateProjectAssignmentFilters();
-  const rows = filteredProjectAssignmentRows().sort(compareProjectNo);
+  const rows = filteredProjectAssignmentRows().sort(compareProjectAssignmentRows);
   tbody.innerHTML = rows.length
     ? rows
         .map(
-          (project) => `<tr data-project-assignment-row="${escapeAttr(project.id)}" tabindex="0">
+          (project) => `<tr class="${projectAssignmentPending(project) ? "is-assignment-pending" : "is-assignment-complete"}" data-project-assignment-row="${escapeAttr(project.id)}" tabindex="0">
             <td>${escapeHtml(project.projectNo || "-")}</td>
             <td>${escapeHtml(project.name || "-")}</td>
             <td>${projectAssignmentSelect(project, "pm", "pmId", ["pm"])}</td>
@@ -6170,6 +6699,7 @@ function renderAll(includeFilters = true) {
   renderProjectAssignmentRows();
   renderProjectCompletionRows();
   updateProjectCompletionNavCount();
+  updateProjectAssignmentNavCount();
   renderBasicManagement();
   renderDepartments();
   renderLeaveManagement();
@@ -6244,29 +6774,36 @@ document.addEventListener("change", (event) => {
       renderProjectAssignmentRows();
       return;
     }
-    const project = projectAssignmentSource().find((item) => item.id === assignmentSelect.dataset.projectAssignmentId);
+    const project = projectAssignmentSaveSource().find((item) => item.id === assignmentSelect.dataset.projectAssignmentId);
     if (!project || !canManageProjectAssignment()) return;
     const nameField = assignmentSelect.dataset.projectAssignmentField;
     const idField = assignmentSelect.dataset.projectAssignmentIdField;
     const selectedOption = assignmentSelect.selectedOptions?.[0];
+    const previousValue = String(project[idField] || project[nameField] || "").trim();
+    const nextValue = String(assignmentSelect.value || "").trim();
+    const assignedAtField = `${nameField}AssignedAt`;
     project[idField] = assignmentSelect.value || "";
     project[nameField] = assignmentSelect.value ? selectedOption?.dataset.name || selectedOption?.textContent?.trim() || "" : "";
+    if (previousValue !== nextValue) project[assignedAtField] = nextValue ? new Date().toISOString() : "";
     const localProject = projects.find((item) => item.id === project.id);
     if (localProject) {
       localProject[idField] = project[idField];
       localProject[nameField] = project[nameField];
+      localProject[assignedAtField] = project[assignedAtField] || "";
     }
-    void projectRepository.saveProjectAssignments(projectAssignmentSource()).then((result) => {
+    void projectRepository.saveProjectAssignments(projectAssignmentSaveSource()).then((result) => {
       if (result.projects) projects = result.projects.map(normalizeProject).filter(hasProjectNo);
       if (result.assignmentProjects) assignmentProjects = result.assignmentProjects.map(normalizeProject).filter(hasProjectNo);
       if (result.scheduleProjects) scheduleProjects = result.scheduleProjects.map(normalizeProject).filter(hasProjectNo);
       renderRows();
       renderProjectAssignmentRows();
+      updateProjectAssignmentNavCount();
       renderScheduleViews();
       renderDetail();
     }).catch((error) => {
       alert(error?.message || "프로젝트 배정을 저장하지 못했습니다.");
       renderProjectAssignmentRows();
+      updateProjectAssignmentNavCount();
     });
     return;
   }
@@ -6326,14 +6863,6 @@ on("detailSearchInput", "keydown", (event) => {
   if (event.key === "Enter") event.preventDefault();
 });
 
-["foreignFilter", "landingFilter", "designFilter", "excludeClosedFilter"].forEach((id) => {
-  on(id, "change", () => {
-    progressStatusFilter = "";
-    milestoneFilter = "";
-    renderRows();
-  });
-});
-
 on("milestoneFilterToggle", "click", (event) => {
   event.stopPropagation();
   setMilestoneFilterOpen(!$("milestoneFilterWrap")?.classList.contains("open"));
@@ -6357,6 +6886,19 @@ on("statusFilterMenu", "change", (event) => {
   progressStatusFilter = "";
   milestoneFilter = "";
   updateStatusFilterLabel();
+  renderRows();
+});
+
+on("projectOptionFilterToggle", "click", (event) => {
+  event.stopPropagation();
+  setProjectOptionFilterOpen(!$("projectOptionFilterWrap")?.classList.contains("open"));
+});
+on("projectOptionFilterMenu", "click", (event) => event.stopPropagation());
+on("projectOptionFilterMenu", "change", (event) => {
+  if (event.target.type !== "checkbox") return;
+  progressStatusFilter = "";
+  milestoneFilter = "";
+  updateProjectOptionFilterLabel();
   renderRows();
 });
 
@@ -6401,6 +6943,10 @@ on("downloadProjectsData", "click", (event) => {
   event.stopPropagation();
   openDownloadDialog();
 });
+on("downloadMembersExcelBtn", "click", (event) => {
+  event.stopPropagation();
+  downloadMembersExcel();
+});
 on("downloadForm", "submit", submitDownloadForm);
 on("closeDownload", "click", closeDownloadDialog);
 on("newProject", "click", (event) => {
@@ -6417,6 +6963,8 @@ on("addClientContact", "click", addClientContact);
 on("addCommunication", "click", addCommunication);
 on("addProjectSchedule", "click", addProjectSchedule);
 on("projectCompleteAction", "click", completeSelectedProjectStage);
+on("closeProjectCompletionDialog", "click", closeProjectCompletionDialog);
+on("projectCompletionForm", "submit", submitProjectCompletionDialog);
 on("quoteFile", "change", handlePdfUpload);
 on("quoteAction", "click", handleQuoteAction);
 on("shortcutAction", "click", () => openProjectLink(selectedProject(), "shortcutUrl"));

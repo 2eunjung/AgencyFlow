@@ -30,22 +30,13 @@
                 </button>
                 <div id="statusFilterMenu" class="multi-select-menu" role="listbox" aria-label="작업상태 필터" aria-multiselectable="true"></div>
               </div>
-              <label class="filter-check">
-                <input id="foreignFilter" type="checkbox" />
-                다국어 여부
-              </label>
-              <label class="filter-check">
-                <input id="landingFilter" type="checkbox" />
-                랜딩 유무
-              </label>
-              <label class="filter-check">
-                <input id="designFilter" type="checkbox" />
-                화면설계 URL 유무
-              </label>
-              <label class="exclude-closed-filter">
-                <input id="excludeClosedFilter" type="checkbox" checked />
-                종료 건 제외
-              </label>
+              <div class="multi-select" id="projectOptionFilterWrap">
+                <button id="projectOptionFilterToggle" class="multi-select-toggle" type="button" aria-haspopup="listbox" aria-expanded="false">
+                  <span id="projectOptionFilterLabel" class="multi-select-label">상세 조건</span>
+                  <span class="multi-select-caret" aria-hidden="true">▾</span>
+                </button>
+                <div id="projectOptionFilterMenu" class="multi-select-menu" role="listbox" aria-label="상세 조건 필터" aria-multiselectable="true"></div>
+              </div>
             </div>
 
             <div class="table-wrap">

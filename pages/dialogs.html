@@ -278,6 +278,29 @@
       </form>
     </dialog>
 
+
+    <dialog id="projectCompletionDialog" class="login-dialog project-completion-dialog">
+      <form id="projectCompletionForm" class="login-card">
+        <div class="panel-head">
+          <div>
+            <h2>완료 등록</h2>
+            <p id="projectCompletionDialogProjectName"></p>
+          </div>
+          <button id="closeProjectCompletionDialog" class="icon-btn" aria-label="닫기" type="button">&times;</button>
+        </div>
+        <div class="login-body">
+          <select id="projectCompletionType" class="member-dialog-select" required>
+            <option value="design">디자인완료</option>
+            <option value="publishing">퍼블리싱완료</option>
+            <option value="program">프로그램완료</option>
+          </select>
+          <textarea id="projectCompletionMemo" class="project-completion-memo" rows="3" maxlength="200" placeholder="비고 내용을 입력하세요."></textarea>
+          <button class="primary-btn" type="submit">등록</button>
+          <p id="projectCompletionDialogMessage"></p>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="downloadDialog" class="login-dialog">
       <form id="downloadForm" class="login-card">
         <div class="panel-head">

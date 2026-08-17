@@ -499,7 +499,7 @@ h3 {
 
 .filters {
   display: grid;
-  grid-template-columns: var(--detail-left) minmax(120px, 0.9fr) repeat(2, minmax(120px, 1fr)) repeat(4, auto);
+  grid-template-columns: var(--detail-left) minmax(120px, 0.9fr) repeat(3, minmax(120px, 1fr));
   gap: 8px;
   padding: 14px 20px;
   border-bottom: 1px solid var(--line);
@@ -882,6 +882,28 @@ th.table-sort-trigger.is-active [data-sort-icon] {
 .projects-table th:nth-child(10),
 .projects-table td:nth-child(10) {
   text-align: center;
+}
+
+.project-staff-cell {
+  display: inline-grid;
+  justify-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.staff-duration-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 6px;
+  border: 1px solid rgba(22, 101, 52, 0.18);
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #166534;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .monthly-projects-table {
@@ -1575,6 +1597,10 @@ legend {
   gap: 8px;
 }
 
+.issue-view-head {
+  align-items: center;
+}
+
 .entry-card-head {
   display: flex;
   align-items: flex-start;
@@ -1659,6 +1685,11 @@ legend {
   gap: 8px;
 }
 
+.issue-meta-row {
+  min-height: 24px;
+}
+
+.issue-author,
 .issue-date {
   color: var(--muted);
   font-size: 12px;
@@ -1691,6 +1722,9 @@ legend {
 .issue-complete-check {
   margin: 0;
   flex: 0 0 auto;
+  min-height: auto;
+  padding: 0;
+  gap: 0;
 }
 
 .issue-complete-status {
@@ -2152,6 +2186,21 @@ legend {
   box-shadow: var(--shadow);
 }
 
+
+.project-completion-dialog {
+  width: min(240px, calc(100vw - 32px));
+}
+
+.project-completion-dialog .login-body {
+  gap: 10px;
+}
+
+.project-completion-memo {
+  width: 100%;
+  min-height: 78px;
+  resize: vertical;
+}
+
 .login-dialog::backdrop {
   background: rgba(17, 24, 39, 0.42);
 }
@@ -2331,6 +2380,14 @@ body.auth-locked .login-dialog::backdrop {
   background: #edf7f3;
 }
 
+.management-table tbody tr.is-assignment-complete {
+  background: #f3f4f6;
+}
+
+.management-table tbody tr.is-assignment-complete:hover {
+  background: #e5e7eb;
+}
+
 .management-table .role-badge,
 .management-table .status-badge {
   margin: 0 auto;
@@ -2376,6 +2433,21 @@ body.auth-locked .login-dialog::backdrop {
 
 .status-badge.rejected,
 .member-approval-select.rejected {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.status-badge.log-action-create {
+  color: #14532d;
+  background: #dcfce7;
+}
+
+.status-badge.log-action-update {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.status-badge.log-action-delete {
   color: #991b1b;
   background: #fee2e2;
 }
@@ -3486,6 +3558,12 @@ body.detail-open .issue-projects-table tbody tr.selected {
   font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.project-work-stack-memo-text {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .schedule-list-table tbody tr[data-schedule-entry-id] {

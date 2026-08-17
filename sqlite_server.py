@@ -57,17 +57,15 @@ PROJECT_STAFF_ASSIGNMENTS = (
     ("programmer", "programmerId", ("프로그램", "프로그래머")),
 )
 PROJECT_COMPLETION_STAGES = (
-    {"key": "design_worker", "label": "디자인 담당자 완료", "actor": "worker", "departments": ("디자인", "디자이너"), "name_key": "designer", "id_key": "designerId"},
-    {"key": "design_lead", "label": "디자인 팀장 완료", "actor": "lead", "departments": ("디자인", "디자이너")},
-    {"key": "design_pm", "label": "PM 완료", "actor": "pm", "departments": ("pm",), "name_key": "pm", "id_key": "pmId"},
-    {"key": "publishing_ready", "label": "퍼블리싱 팀장 확인", "actor": "lead", "departments": ("퍼블리싱", "퍼블리셔")},
-    {"key": "publishing_worker", "label": "퍼블리싱 담당자 완료", "actor": "worker", "departments": ("퍼블리싱", "퍼블리셔"), "name_key": "publisher", "id_key": "publisherId"},
-    {"key": "publishing_lead", "label": "퍼블리싱 팀장 완료", "actor": "lead", "departments": ("퍼블리싱", "퍼블리셔")},
-    {"key": "publishing_pm", "label": "PM 완료", "actor": "pm", "departments": ("pm",), "name_key": "pm", "id_key": "pmId"},
-    {"key": "program_ready", "label": "프로그램 팀장 확인", "actor": "lead", "departments": ("프로그램", "프로그래머")},
-    {"key": "program_worker", "label": "프로그램 담당자 완료", "actor": "worker", "departments": ("프로그램", "프로그래머"), "name_key": "programmer", "id_key": "programmerId"},
-    {"key": "program_lead", "label": "프로그램 팀장 완료", "actor": "lead", "departments": ("프로그램", "프로그래머")},
-    {"key": "program_pm", "label": "최종 PM 완료", "actor": "pm", "departments": ("pm",), "name_key": "pm", "id_key": "pmId"},
+    {"key": "design_worker", "label": "담당자 디자인 완료", "actor": "worker", "departments": ("디자인", "디자이너"), "name_key": "designer", "id_key": "designerId"},
+    {"key": "design_lead", "label": "팀장 디자인 완료", "actor": "lead", "departments": ("디자인", "디자이너")},
+    {"key": "design_pm", "label": "PM 디자인 완료", "actor": "pm", "departments": ("pm",), "name_key": "pm", "id_key": "pmId"},
+    {"key": "publishing_worker", "label": "담당자 퍼블리싱 완료", "actor": "worker", "departments": ("퍼블리싱", "퍼블리셔"), "name_key": "publisher", "id_key": "publisherId"},
+    {"key": "publishing_lead", "label": "팀장 퍼블리싱 완료", "actor": "lead", "departments": ("퍼블리싱", "퍼블리셔")},
+    {"key": "publishing_pm", "label": "PM 퍼블리싱 완료", "actor": "pm", "departments": ("pm",), "name_key": "pm", "id_key": "pmId"},
+    {"key": "program_worker", "label": "담당자 프로그램 완료", "actor": "worker", "departments": ("프로그램", "프로그래머"), "name_key": "programmer", "id_key": "programmerId"},
+    {"key": "program_lead", "label": "팀장 프로그램 완료", "actor": "lead", "departments": ("프로그램", "프로그래머")},
+    {"key": "program_pm", "label": "PM 프로그램 완료", "actor": "pm", "departments": ("pm",), "name_key": "pm", "id_key": "pmId"},
 )
 PDF_DANGEROUS_MARKERS = (
     b"/JavaScript",
@@ -1157,6 +1155,20 @@ def project_identity(project):
     return str(project.get("id") or project.get("projectNo") or project.get("no") or "").strip()
 
 
+def next_project_no(projects):
+    used = {str(project.get("projectNo") or "").strip() for project in projects if isinstance(project, dict)}
+    number = 0
+    while f"{number:05d}" in used:
+        number += 1
+    return f"{number:05d}"
+
+
+def ensure_project_no(project, existing_projects):
+    if isinstance(project, dict) and not str(project.get("projectNo") or "").strip():
+        project["projectNo"] = next_project_no(existing_projects)
+    return project
+
+
 def project_log_entry(action, category, project, target="", summary=""):
     return {
         "action": action,
@@ -1191,8 +1203,36 @@ def issue_signature(issue):
         "memo": issue.get("memo") or issue.get("text") or "",
         "status": issue.get("status") or "",
         "type": issue.get("type") or "",
-        "completed": bool(issue.get("completed")),
+        "resolved": bool(issue.get("resolved") or issue.get("completed")),
     }, ensure_ascii=False, sort_keys=True)
+
+
+def issue_log_summary(previous, current, action):
+    before_memo = str((previous or {}).get("memo") or (previous or {}).get("text") or "").strip()
+    after_memo = str((current or {}).get("memo") or (current or {}).get("text") or "").strip()
+    if action == "등록":
+        return "이슈 내용 등록" if after_memo else "이슈 등록"
+    if action == "삭제":
+        return "이슈 내용 삭제" if before_memo else "이슈 삭제"
+    before_status = str((previous or {}).get("status") or "").strip()
+    after_status = str((current or {}).get("status") or "").strip()
+    if before_status != after_status:
+        return "이슈 상태 변경"
+    before_type = str((previous or {}).get("type") or "").strip()
+    after_type = str((current or {}).get("type") or "").strip()
+    if before_type != after_type:
+        return "이슈 유형 변경"
+    before_resolved = bool((previous or {}).get("resolved") or (previous or {}).get("completed"))
+    after_resolved = bool((current or {}).get("resolved") or (current or {}).get("completed"))
+    if before_resolved != after_resolved:
+        return "이슈 상태 변경"
+    if before_memo and not after_memo:
+        return "이슈 내용 삭제"
+    if not before_memo and after_memo:
+        return "이슈 내용 등록"
+    if before_memo != after_memo:
+        return "이슈 내용 수정"
+    return "이슈 수정"
 
 
 def schedule_signature(entry):
@@ -1230,13 +1270,13 @@ def build_project_logs_from_diff(before_projects, after_projects):
         after_issues = {str(issue.get("id") or index): issue for index, issue in enumerate(project.get("issues") or []) if isinstance(issue, dict)}
         for issue_id, issue in before_issues.items():
             if issue_id not in after_issues:
-                logs.append(project_log_entry("\uc0ad\uc81c", "\uc774\uc288", project, target="\uc774\uc288", summary="\uc774\uc288 \ub0b4\uc6a9 \uc0ad\uc81c"))
+                logs.append(project_log_entry("\uc0ad\uc81c", "\uc774\uc288", project, target="\uc774\uc288", summary=issue_log_summary(issue, None, "삭제")))
         for issue_id, issue in after_issues.items():
             old = before_issues.get(issue_id)
             if not old:
-                logs.append(project_log_entry("\ub4f1\ub85d", "\uc774\uc288", project, target="\uc774\uc288", summary="\uc774\uc288 \ub0b4\uc6a9 \ub4f1\ub85d"))
+                logs.append(project_log_entry("\ub4f1\ub85d", "\uc774\uc288", project, target="\uc774\uc288", summary=issue_log_summary(None, issue, "등록")))
             elif issue_signature(old) != issue_signature(issue):
-                logs.append(project_log_entry("\uc218\uc815", "\uc774\uc288", project, target="\uc774\uc288", summary="\uc774\uc288 \ub0b4\uc6a9 \uc218\uc815"))
+                logs.append(project_log_entry("\uc218\uc815", "\uc774\uc288", project, target="\uc774\uc288", summary=issue_log_summary(old, issue, "수정")))
         before_schedules = {str(entry.get("id") or index): entry for index, entry in enumerate(previous.get("schedules") or []) if isinstance(entry, dict)}
         after_schedules = {str(entry.get("id") or index): entry for index, entry in enumerate(project.get("schedules") or []) if isinstance(entry, dict)}
         for entry_id, entry in before_schedules.items():
@@ -1296,7 +1336,81 @@ def merge_schedule_entries_for_user(existing_project, incoming_project, user):
     return merged
 
 
+def user_can_edit_project_activity(user):
+    return user_can_edit_projects(user) or user_in_department(user, "영업")
+
+
+def user_can_edit_project_issues(user):
+    return is_admin(user) or user_in_department(user, "영업", "pm", "디자인", "디자이너", "퍼블리싱", "퍼블리셔", "프로그램", "프로그래머")
+
+
+def user_can_edit_project_communications(user):
+    return is_admin(user) or user_in_department(user, "영업", "pm")
+
+
+def user_can_manage_project_quote(user):
+    return is_admin(user) or user_in_department(user, "영업", "경영관리")
+
+
+def merge_entries_without_delete(existing_entries, incoming_entries):
+    incoming_by_id = {
+        str(entry.get("id")): entry
+        for entry in (incoming_entries or [])
+        if isinstance(entry, dict) and str(entry.get("id") or "").strip()
+    }
+    merged = []
+    used = set()
+    for entry in existing_entries or []:
+        if not isinstance(entry, dict):
+            continue
+        entry_id = str(entry.get("id") or "").strip()
+        if entry_id and entry_id in incoming_by_id:
+            merged.append(incoming_by_id[entry_id])
+            used.add(entry_id)
+        else:
+            merged.append(entry)
+    for entry in incoming_entries or []:
+        if not isinstance(entry, dict):
+            continue
+        entry_id = str(entry.get("id") or "").strip()
+        if entry_id and entry_id in used:
+            continue
+        merged.append(entry)
+    return merged
+
+
+def protect_admin_only_activity_fields(existing_project, incoming_project, user):
+    item = dict(incoming_project)
+    if not is_admin(user):
+        item["issues"] = merge_entries_without_delete(existing_project.get("issues") or [], incoming_project.get("issues") or []) if user_can_edit_project_issues(user) else existing_project.get("issues") or []
+        item["communications"] = merge_entries_without_delete(existing_project.get("communications") or [], incoming_project.get("communications") or []) if user_can_edit_project_communications(user) else existing_project.get("communications") or []
+    return item
+
+
+def merge_project_activity_fields(existing_project, incoming_project, user):
+    item = dict(existing_project)
+    if user_can_edit_project_activity(user):
+        item["clientContacts"] = incoming_project.get("clientContacts") or []
+    if user_can_edit_project_issues(user):
+        item["issues"] = (incoming_project.get("issues") or []) if is_admin(user) else merge_entries_without_delete(existing_project.get("issues") or [], incoming_project.get("issues") or [])
+    if user_can_edit_project_communications(user):
+        item["communications"] = (incoming_project.get("communications") or []) if is_admin(user) else merge_entries_without_delete(existing_project.get("communications") or [], incoming_project.get("communications") or [])
+    if user_can_manage_project_quote(user):
+        item["quoteFileName"] = incoming_project.get("quoteFileName") or ""
+        item["quoteFileData"] = incoming_project.get("quoteFileData") or ""
+    return item
+
+
 def merge_projects_for_user(existing_projects, incoming_projects, user):
+    normalized_incoming = []
+    number_source = list(existing_projects)
+    for project in incoming_projects:
+        if isinstance(project, dict):
+            project = dict(project)
+            project = ensure_project_no(project, number_source)
+            number_source.append(project)
+        normalized_incoming.append(project)
+    incoming_projects = normalized_incoming
     if is_admin(user):
         return incoming_projects
     incoming_by_id = {project_identity(project): project for project in incoming_projects if isinstance(project, dict) and project_identity(project)}
@@ -1304,13 +1418,13 @@ def merge_projects_for_user(existing_projects, incoming_projects, user):
     used = set()
     for project in existing_projects:
         key = project_identity(project)
-        can_edit_project = user_in_department(user, "pm") or user_can_access_project(user, project)
+        can_edit_project = user_in_department(user, "pm") or user_can_access_project(user, project) or user_can_edit_project_activity(user) or user_can_edit_project_issues(user) or user_can_edit_project_communications(user) or user_can_manage_project_quote(user)
         if key in incoming_by_id and can_edit_project:
             candidate = incoming_by_id[key]
             if user_can_edit_projects(user):
-                merged.append(candidate if (user_in_department(user, "pm") or user_can_access_project(user, candidate)) else project)
+                merged.append(protect_admin_only_activity_fields(project, candidate, user) if (user_in_department(user, "pm") or user_can_access_project(user, candidate)) else project)
             else:
-                item = dict(project)
+                item = merge_project_activity_fields(project, candidate, user)
                 item["schedules"] = merge_schedule_entries_for_user(project, candidate, user)
                 merged.append(item)
             used.add(key)
@@ -1343,6 +1457,40 @@ def assignment_fields_for_user(user):
     return set()
 
 
+def project_completion_done(project, *stage_keys):
+    completed = set(normalize_completion_flow((project or {}).get("completionFlow")).get("completed", []))
+    return all(key in completed for key in stage_keys)
+
+
+def project_assignment_missing(project, name_key, id_key):
+    return not str((project or {}).get(id_key) or (project or {}).get(name_key) or "").strip()
+
+
+def project_ready_for_assignment_departments(project, departments):
+    normalized = {normalize_department_key(department) for department in departments}
+    if "pm" in normalized:
+        return True
+    if "디자인" in normalized:
+        return not project_assignment_missing(project, "pm", "pmId")
+    if "퍼블리싱" in normalized:
+        return project_completion_done(project, "design_worker", "design_lead", "design_pm")
+    if "프로그램" in normalized:
+        return project_completion_done(project, "publishing_worker", "publishing_lead", "publishing_pm")
+    return False
+
+
+def project_ready_for_assignment_field(project, name_key, id_key):
+    if (name_key, id_key) == ("pm", "pmId"):
+        return project_ready_for_assignment_departments(project, ("pm",))
+    if (name_key, id_key) == ("designer", "designerId"):
+        return project_ready_for_assignment_departments(project, ("디자인", "디자이너"))
+    if (name_key, id_key) == ("publisher", "publisherId"):
+        return project_ready_for_assignment_departments(project, ("퍼블리싱", "퍼블리셔"))
+    if (name_key, id_key) == ("programmer", "programmerId"):
+        return project_ready_for_assignment_departments(project, ("프로그램", "프로그래머"))
+    return False
+
+
 def merge_project_assignments_for_user(existing_projects, incoming_projects, user):
     allowed_fields = assignment_fields_for_user(user)
     if not allowed_fields:
@@ -1357,8 +1505,12 @@ def merge_project_assignments_for_user(existing_projects, incoming_projects, use
             continue
         item = dict(project)
         for name_key, id_key in allowed_fields:
+            if not is_admin(user) and not project_ready_for_assignment_field(project, name_key, id_key):
+                continue
             item[name_key] = str(candidate.get(name_key) or "").strip()
             item[id_key] = str(candidate.get(id_key) or "").strip()
+            assigned_at_key = f"{name_key}AssignedAt"
+            item[assigned_at_key] = str(candidate.get(assigned_at_key) or "").strip()
         merged.append(item)
     return merged
 
@@ -1372,7 +1524,7 @@ def normalize_completion_flow(flow):
         if key in allowed and key not in completed:
             completed.append(key)
     history = flow.get("history") if isinstance(flow.get("history"), list) else []
-    return {"completed": completed, "history": history}
+    return {"completed": completed, "history": history, "pendingType": str(flow.get("pendingType") or ""), "hideApproval": bool(flow.get("hideApproval"))}
 
 
 def project_completion_stage(project):
@@ -1412,7 +1564,23 @@ def user_can_advance_project_completion(user, project, stage=None):
     return False
 
 
-def advance_project_completion(project, user):
+def normalize_completion_type(value):
+    value = str(value or "").strip().lower()
+    return value if value in {"design", "publishing", "program"} else ""
+
+
+def normalize_completion_type_from_stage_key(key):
+    key = str(key or "")
+    if key.startswith("design_"):
+        return "design"
+    if key.startswith("publishing_"):
+        return "publishing"
+    if key.startswith("program_"):
+        return "program"
+    return ""
+
+
+def advance_project_completion(project, user, completion_type="", memo=""):
     stage = project_completion_stage(project)
     if not stage:
         raise ValueError('이미 모든 완료 단계가 처리되었습니다.')
@@ -1420,20 +1588,35 @@ def advance_project_completion(project, user):
         raise PermissionError('현재 계정은 이 완료 단계를 처리할 권한이 없습니다.')
     item = dict(project)
     flow = normalize_completion_flow(item.get("completionFlow"))
+    completion_type = normalize_completion_type(completion_type)
+    memo = str(memo or "").strip()[:200]
+    if completion_type:
+        flow["pendingType"] = completion_type
+    flow["hideApproval"] = bool(is_admin(user) and stage.get("actor") == "worker")
     flow["completed"].append(stage["key"])
+    history_stage = stage
+    if stage.get("actor") == "worker" and is_team_lead(user):
+        completed = set(flow["completed"])
+        next_stage = next((candidate for candidate in PROJECT_COMPLETION_STAGES if candidate["key"] not in completed), None)
+        current_type = completion_type or normalize_completion_type_from_stage_key(stage.get("key", ""))
+        next_type = normalize_completion_type_from_stage_key(next_stage.get("key", "") if next_stage else "")
+        if next_stage and next_stage.get("actor") == "lead" and current_type and current_type == next_type:
+            flow["completed"].append(next_stage["key"])
+            history_stage = next_stage
     flow["history"].append({
         "id": secrets.token_urlsafe(12),
-        "stage": stage["key"],
-        "label": stage["label"],
+        "stage": history_stage["key"],
+        "label": history_stage["label"],
         "userId": str(user.get("id") or ""),
         "userName": str(user.get("name") or ""),
         "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "memo": "",
+        "memo": memo,
         "action": "approve",
         "reason": "",
+        "completionType": completion_type,
     })
     item["completionFlow"] = flow
-    return item, stage
+    return item, history_stage
 
 
 def reject_project_completion(project, user, reason=""):
@@ -1451,7 +1634,13 @@ def reject_project_completion(project, user, reason=""):
     flow = normalize_completion_flow(item.get("completionFlow"))
     if not flow["completed"]:
         raise ValueError('반려할 완료 요청이 없습니다.')
-    rejected_key = flow["completed"].pop()
+    rejected_type = normalize_completion_type_from_stage_key(stage.get("key", ""))
+    rejected_key = flow["completed"][-1]
+    while flow["completed"]:
+        latest_key = flow["completed"][-1]
+        if rejected_type and normalize_completion_type_from_stage_key(latest_key) != rejected_type:
+            break
+        rejected_key = flow["completed"].pop()
     rejected_stage = next((item for item in PROJECT_COMPLETION_STAGES if item["key"] == rejected_key), stage)
     flow["history"].append({
         "id": secrets.token_urlsafe(12),
@@ -1547,7 +1736,7 @@ def user_in_department(user, *names):
 
 
 def user_can_view_all_projects(user):
-    return is_admin(user) or user_in_department(user, "경영관리", "영업", "pm")
+    return is_admin(user) or is_team_lead(user) or user_in_department(user, "경영관리", "영업", "pm")
 
 
 def user_can_edit_projects(user):
@@ -1655,12 +1844,16 @@ def assignment_project_payload(project):
         "name": project.get("name", ""),
         "pm": project.get("pm", ""),
         "pmId": project.get("pmId", ""),
+        "pmAssignedAt": project.get("pmAssignedAt", ""),
         "designer": project.get("designer", ""),
         "designerId": project.get("designerId", ""),
+        "designerAssignedAt": project.get("designerAssignedAt", ""),
         "publisher": project.get("publisher", ""),
         "publisherId": project.get("publisherId", ""),
+        "publisherAssignedAt": project.get("publisherAssignedAt", ""),
         "programmer": project.get("programmer", ""),
         "programmerId": project.get("programmerId", ""),
+        "programmerAssignedAt": project.get("programmerAssignedAt", ""),
         "completionFlow": project.get("completionFlow") or {},
     }
 
@@ -1999,7 +2192,10 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     if logs:
                         log_project_actions(conn, user, logs)
                     conn.commit()
-                    return self.write_json({"ok": True, "logged": len(logs)})
+                    snapshot = dataset_snapshot(conn, mode, user)
+                    snapshot["ok"] = True
+                    snapshot["logged"] = len(logs)
+                    return self.write_json(snapshot)
                 if parsed.path == "/api/project-assignments":
                     mode = normalize_mode(payload.get("mode"))
                     if mode == "public":
@@ -2137,7 +2333,7 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                             if action == "reject":
                                 changed_project, changed_stage = reject_project_completion(project, user, payload.get("reason") or "")
                             else:
-                                changed_project, changed_stage = advance_project_completion(project, user)
+                                changed_project, changed_stage = advance_project_completion(project, user, payload.get("completionType") or "", payload.get("memo") or "")
                             updated_projects.append(changed_project)
                         else:
                             updated_projects.append(project)
@@ -2146,7 +2342,7 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     conn.execute("DELETE FROM project_records WHERE mode = ?", (mode,))
                     insert_projects(conn, mode, updated_projects)
                     log_action = "반려" if action == "reject" else "완료"
-                    log_project_actions(conn, user, [project_log_entry("??", log_action, changed_project, target="???? ??", summary=changed_stage.get("label", log_action))])
+                    log_project_actions(conn, user, [project_log_entry("수정", log_action, changed_project, target="프로젝트 완료", summary=changed_stage.get("label", log_action))])
                     conn.commit()
                     return self.write_json(dataset_snapshot(conn, mode, user))
                 if parsed.path == "/api/project-logs":
