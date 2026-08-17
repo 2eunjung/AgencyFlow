@@ -1,4 +1,4 @@
-
+﻿
 :root {
   --topbar: #3f3f3f;
   --sidebar: #dceee7;
@@ -1591,6 +1591,39 @@ legend {
   word-break: keep-all;
 }
 
+.issue-text-dropdown {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.issue-text-dropdown summary {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.issue-text-dropdown summary::-webkit-details-marker {
+  display: none;
+}
+
+
+.issue-text-dropdown[open] summary {
+  display: none;
+}
+
+.issue-text-dropdown p {
+  margin: 0;
+  cursor: pointer;
+  white-space: pre-wrap;
+  word-break: keep-all;
+}
+
 .issue-view,
 .communication-view {
   display: grid;
@@ -1658,7 +1691,7 @@ legend {
 
 .issue-edit-fields {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -1697,6 +1730,18 @@ legend {
   white-space: nowrap;
 }
 
+.issue-visibility-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
 .issue-status-badge,
 .issue-type-badge {
   display: inline-flex;
@@ -1717,26 +1762,6 @@ legend {
 .issue-type-badge {
   background: #eef2ff;
   color: #4338ca;
-}
-
-.issue-complete-check {
-  margin: 0;
-  flex: 0 0 auto;
-  min-height: auto;
-  padding: 0;
-  gap: 0;
-}
-
-.issue-complete-status {
-  display: inline-flex;
-  align-items: center;
-  min-height: 22px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: #dbeafe;
-  color: #1d4ed8;
-  font-size: 11px;
-  font-weight: 800;
 }
 
 .issue-card.is-issue-resolved {
@@ -3659,3 +3684,7 @@ body.detail-open .issue-projects-table tbody tr.selected {
   background: transparent;
   border: 0;
 }
+
+
+
+

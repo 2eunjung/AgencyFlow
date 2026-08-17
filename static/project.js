@@ -837,6 +837,10 @@ function normalizeIssueType(value, fallback = "") {
   return aliases[raw] || fallback;
 }
 
+function normalizeIssueVisibility(value) {
+  return String(value || "").trim() === "private" ? "private" : "visible";
+}
+
 function normalizeIssue(issue) {
   const memo = String(issue?.memo || issue?.title || "").trim();
   const createdAt = issue?.createdAt || new Date().toISOString();
@@ -853,6 +857,7 @@ function normalizeIssue(issue) {
     createdAt,
     createdById: issue?.createdById || "",
     createdByName: issue?.createdByName || "",
+    visibility: normalizeIssueVisibility(issue?.visibility),
     resolved,
   };
 }
@@ -1000,6 +1005,7 @@ function issueLogSummary(previous, current, action) {
   if (action === "삭제") return beforeMemo ? "이슈 내용 삭제" : "이슈 삭제";
   if (before && after && before.status !== after.status) return "이슈 상태 변경";
   if (before && after && before.type !== after.type) return "이슈 유형 변경";
+  if (before && after && normalizeIssueVisibility(before.visibility) !== normalizeIssueVisibility(after.visibility)) return "이슈 노출 여부 변경";
   const beforeResolved = before ? Boolean(before.resolved) : false;
   const afterResolved = after ? Boolean(after.resolved) : false;
   if (!beforeResolved && afterResolved) return "이슈 해제";
@@ -1018,6 +1024,7 @@ function stableIssueSignature(issue) {
     memo: normalized.memo,
     date: normalized.date,
     resolved: normalized.resolved,
+    visibility: normalized.visibility,
   });
 }
 
@@ -1263,6 +1270,14 @@ function canEditProjectIssues() {
   return isAdmin() || isDepartment("영업", "pm", "디자인", "디자이너", "퍼블리싱", "퍼블리셔", "프로그램", "프로그래머");
 }
 
+function canViewPrivateIssues() {
+  return isAdmin() || isTeamLead() || isDepartment("영업", "pm");
+}
+
+function canManageIssueVisibility() {
+  return canViewPrivateIssues();
+}
+
 function canEditProjectCommunications() {
   return isAdmin() || isDepartment("영업", "pm");
 }
@@ -1313,6 +1328,19 @@ function scheduleEntryOwnedByCurrentUser(entry) {
   const ownerName = String(entry.createdByName || "").trim().toLowerCase();
   const staffName = String(entry.staffName || "").trim().toLowerCase();
   return Boolean((userId && ownerId === userId) || (userName && (ownerName === userName || (!ownerId && staffName === userName))));
+}
+
+function entryOwnedByCurrentUser(entry) {
+  if (!currentUser || !entry) return false;
+  const userId = assignedProjectUserId().toLowerCase();
+  const userName = assignedProjectUserName().toLowerCase();
+  const ownerId = String(entry.createdById || "").trim().toLowerCase();
+  const ownerName = String(entry.createdByName || "").trim().toLowerCase();
+  return Boolean((userId && ownerId === userId) || (!ownerId && userName && ownerName === userName));
+}
+
+function canEditOwnEntry(entry, basePermission) {
+  return Boolean(basePermission && (isAdmin() || editingIssueId === entry?.id || editingCommunicationId === entry?.id || entryOwnedByCurrentUser(entry)));
 }
 
 function canViewProjectScheduleEntry(entry) {
@@ -3096,19 +3124,19 @@ function applyReadOnlyUi() {
     field.readOnly = true;
     field.classList.toggle("is-readonly", true);
   });
-  detailForm.querySelectorAll(".issue-edit, .issue-save, .issue-cancel").forEach((button) => {
+  detailForm.querySelectorAll(".issue-save, .issue-cancel").forEach((button) => {
     button.classList.toggle("hidden", !canEditIssues);
   });
   detailForm.querySelectorAll(".issue-delete").forEach((button) => {
     button.classList.toggle("hidden", !canDeleteActivityEntries);
   });
-  detailForm.querySelectorAll(".issue-complete-input, .issue-edit, .issue-delete, .issue-save, .issue-cancel").forEach((element) => {
+  detailForm.querySelectorAll(".issue-edit, .issue-delete, .issue-save, .issue-cancel").forEach((element) => {
     if (element.matches("input")) element.disabled = !canEditIssues;
   });
   detailForm.querySelectorAll(".contact-edit, .contact-delete, .contact-save, .contact-cancel").forEach((button) => {
     button.classList.toggle("hidden", !canEditActivity);
   });
-  detailForm.querySelectorAll(".communication-edit, .communication-save, .communication-cancel").forEach((button) => {
+  detailForm.querySelectorAll(".communication-save, .communication-cancel").forEach((button) => {
     button.classList.toggle("hidden", !canEditCommunications);
   });
   detailForm.querySelectorAll(".communication-delete").forEach((button) => {
@@ -3220,18 +3248,38 @@ function matchesDetailSearch(...values) {
   return values.some((value) => String(value || "").toLowerCase().includes(query));
 }
 
-function toggleIssueResolved(project, issueId, resolved) {
-  if (!requireWritableAction()) return false;
-  if (!canEditProjectIssues()) return false;
-  const issue = (project.issues || []).find((item) => item.id === issueId);
-  if (!issue) return false;
-  issue.resolved = Boolean(resolved);
-  if (resolved) issue.status = "프로젝트 참고";
-  else if (issue.status === "프로젝트 참고" || issue.status === "해결완료") issue.status = "확인 필요";
-  void persist();
-  renderIssues(project);
-  renderIssueProjectRows();
-  return true;
+function canViewIssue(issue) {
+  return normalizeIssueVisibility(issue?.visibility) !== "private" || canViewPrivateIssues();
+}
+
+function entrySortTimestamp(entry) {
+  const value = String(entry?.createdAt || entry?.date || "").trim();
+  const time = value ? new Date(value).getTime() : 0;
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function sortEntriesByCreatedDesc(a, b) {
+  const timeDiff = entrySortTimestamp(b) - entrySortTimestamp(a);
+  if (timeDiff) return timeDiff;
+  return String(b?.id || "").localeCompare(String(a?.id || ""));
+}
+
+function shouldCollapseIssueMemo(memo) {
+  const text = String(memo || "");
+  return text.includes("\n") || text.length > 48;
+}
+
+function renderIssueMemo(memo) {
+  const text = String(memo || "내용 없음");
+  if (!shouldCollapseIssueMemo(text)) return `<p class="issue-text">${escapeHtml(text)}</p>`;
+  const firstLine = text.split(/\r?\n/).find((line) => line.trim()) || text;
+  const summary = firstLine.length > 48 ? `${firstLine.slice(0, 48).trim()}...` : `${firstLine.trim()}...`;
+  return `
+    <details class="issue-text-dropdown">
+      <summary>${escapeHtml(summary)}</summary>
+      <p>${escapeHtml(text)}</p>
+    </details>
+  `;
 }
 
 function renderIssues(project) {
@@ -3239,11 +3287,12 @@ function renderIssues(project) {
   if (!list) return;
   project.issues = (project.issues || []).map(normalizeIssue);
   const allIssues = project.issues;
-  const issues = allIssues.filter(
-    (issue) =>
-      issue.id === editingIssueId ||
-      matchesDetailSearch(issue.memo, issue.status, issue.type, issue.title)
-  );
+  const issues = allIssues
+    .filter((issue) => {
+      if (!canViewIssue(issue)) return false;
+      return issue.id === editingIssueId || matchesDetailSearch(issue.memo, issue.status, issue.type, issue.title);
+    })
+    .sort(sortEntriesByCreatedDesc);
   if (!allIssues.length) {
     list.innerHTML = '<p class="empty">등록된 이슈가 없습니다.</p>';
     return;
@@ -3257,28 +3306,34 @@ function renderIssues(project) {
     .map((issue) => {
       const isEditing = issue.id === editingIssueId;
       const resolved = isIssueResolved(issue);
+      const canEditIssueEntry = canEditOwnEntry(issue, canEditProjectIssues());
+      const visibility = normalizeIssueVisibility(issue.visibility);
       return `
         <article class="issue-card${resolved ? " is-issue-resolved" : ""}" data-issue-id="${issue.id}">
           <div class="issue-view ${isEditing ? "hidden" : ""}">
             <div class="entry-card-head issue-view-head">
               <div class="issue-head-main entry-card-head-main issue-meta-row">
-                <label class="issue-complete-check check-option" title="프로젝트 참고">
-                  <input type="checkbox" class="issue-complete-input" data-issue-id="${escapeAttr(issue.id)}" ${resolved ? "checked" : ""} />
-                </label>
                 <span class="issue-author">${escapeHtml(entryAuthorName(issue))}</span>
                 <span class="issue-date">${escapeHtml(formatDate(issue.date))}</span>
+                ${visibility === "private" ? '<span class="issue-visibility-badge">비노출</span>' : ""}
                 ${issue.status ? `<span class="issue-status-badge">${escapeHtml(issue.status)}</span>` : ""}
                 ${issue.type ? `<span class="issue-type-badge">${escapeHtml(issue.type)}</span>` : ""}
               </div>
               <div class="entry-card-head-actions">
-                <button class="ghost-btn issue-edit" type="button">수정</button>
+                <button class="ghost-btn issue-edit ${canEditIssueEntry ? "" : "hidden"}" type="button">수정</button>
                 <button class="ghost-btn danger issue-delete" type="button">삭제</button>
               </div>
             </div>
-            <p class="issue-text">${escapeHtml(issue.memo || "내용 없음")}</p>
+            ${renderIssueMemo(issue.memo)}
           </div>
           <div class="issue-edit-panel ${isEditing ? "" : "hidden"}">
             <div class="issue-edit-fields">
+              <label class="${canManageIssueVisibility() ? "" : "hidden"}">노출 여부
+                <select class="issue-visibility-input">
+                  <option value="visible" ${visibility === "visible" ? "selected" : ""}>노출</option>
+                  <option value="private" ${visibility === "private" ? "selected" : ""}>비노출</option>
+                </select>
+              </label>
               <label>이슈상태
                 <select class="issue-status-input" required>${buildIssueFieldOptions(issueStatusOptions(), issue.status)}</select>
               </label>
@@ -3297,6 +3352,12 @@ function renderIssues(project) {
     })
     .join("");
 
+  list.querySelectorAll(".issue-text-dropdown").forEach((details) => {
+    details.querySelector("p")?.addEventListener("click", () => {
+      details.open = false;
+    });
+  });
+
   list.querySelectorAll(".issue-card").forEach((card) => {
     const issue = allIssues.find((item) => item.id === card.dataset.issueId);
     if (!issue) return;
@@ -3305,34 +3366,27 @@ function renderIssues(project) {
     const textarea = card.querySelector(".issue-memo");
     const statusInput = card.querySelector(".issue-status-input");
     const typeInput = card.querySelector(".issue-type-input");
+    const visibilityInput = card.querySelector(".issue-visibility-input");
     const isEditing = issue.id === editingIssueId;
 
-    card.querySelector(".issue-complete-input")?.addEventListener("change", (event) => {
-      event.stopPropagation();
-      const input = event.target;
-      const checked = input.checked;
-      if (!toggleIssueResolved(project, input.dataset.issueId, checked)) {
-        input.checked = !checked;
-      }
-    });
-
     card.querySelector(".issue-edit").addEventListener("click", () => {
-      if (!canEditProjectIssues()) return;
+      if (!canEditOwnEntry(issue, canEditProjectIssues())) return;
       editingIssueId = issue.id;
       const latestIssue = (selectedProject()?.issues || project.issues || []).map(normalizeIssue).find((item) => item.id === issue.id) || issue;
       statusInput.value = normalizeIssueStatus(latestIssue.status, "");
       typeInput.value = normalizeIssueType(latestIssue.type, "");
+      if (visibilityInput) visibilityInput.value = normalizeIssueVisibility(latestIssue.visibility);
       textarea.value = latestIssue.memo || "";
       view.classList.add("hidden");
       editPanel.classList.remove("hidden");
       textarea.focus();
     });
-    card.querySelector(".issue-cancel").addEventListener("click", () => {
-      if (!canEditProjectIssues()) return;
+    card.querySelector(".issue-cancel").addEventListener("click", async () => {
+      if (!canEditOwnEntry(issue, canEditProjectIssues())) return;
       if (!issue.memo) {
         project.issues = project.issues.filter((item) => item.id !== issue.id);
         editingIssueId = "";
-        persistEntry();
+        if (!isCreatingProject && issue.status) await persistEntry();
         renderIssues(project);
         renderIssueProjectRows();
         return;
@@ -3342,10 +3396,11 @@ function renderIssues(project) {
       view.classList.remove("hidden");
       statusInput.value = normalizeIssueStatus(issue.status, "");
       typeInput.value = normalizeIssueType(issue.type, "");
+      if (visibilityInput) visibilityInput.value = normalizeIssueVisibility(issue.visibility);
       textarea.value = issue.memo || "";
     });
     card.querySelector(".issue-save").addEventListener("click", async () => {
-      if (!canEditProjectIssues()) return;
+      if (!canEditOwnEntry(issue, canEditProjectIssues())) return;
       if (!statusInput.value) {
         alert("이슈상태를 선택해 주세요.");
         statusInput.focus();
@@ -3353,13 +3408,15 @@ function renderIssues(project) {
       }
       issue.status = normalizeIssueStatus(statusInput.value);
       issue.type = normalizeIssueType(typeInput.value);
+      issue.visibility = canManageIssueVisibility() ? normalizeIssueVisibility(visibilityInput?.value) : normalizeIssueVisibility(issue.visibility);
       issue.memo = textarea.value.trim();
       if (!issue.date) issue.date = todayDate();
       if (!issue.createdAt) issue.createdAt = new Date().toISOString();
       issue.resolved = issue.status === "프로젝트 참고";
       editingIssueId = "";
       await persistEntry();
-      renderIssues(selectedProject() || project);
+      const liveProject = selectedProject()?.id === project.id ? selectedProject() : project;
+      renderIssues(liveProject);
       renderIssueProjectRows();
     });
     card.querySelector(".issue-delete").addEventListener("click", async () => {
@@ -3781,12 +3838,7 @@ function fromDateTimeLocalValue(value) {
 function renderCommunications(project) {
   const list = $("communicationList");
   if (!list) return;
-  project.communications = (project.communications || []).sort((a, b) => {
-    const dateA = a.date || "";
-    const dateB = b.date || "";
-    if (dateA === dateB) return String(b.id).localeCompare(String(a.id));
-    return dateA < dateB ? 1 : -1;
-  });
+  project.communications = (project.communications || []).sort(sortEntriesByCreatedDesc);
   const allEntries = project.communications;
   const entries = allEntries.filter(
     (entry) => entry.id === editingCommunicationId || matchesDetailSearch(entry.date, entry.memo)
@@ -3805,13 +3857,14 @@ function renderCommunications(project) {
       const isEditing = entry.id === editingCommunicationId;
       const dateText = entry.date || todayDate();
       const memoText = entry.memo || "";
+      const canEditCommunicationEntry = canEditOwnEntry(entry, canEditProjectCommunications());
       return `
         <article class="communication-card" data-communication-id="${entry.id}">
           <div class="communication-view ${isEditing ? "hidden" : ""}">
             <p class="entry-meta">${escapeHtml(entryAuthorName(entry))} ${escapeHtml(dateText)}</p>
             <p class="issue-text">${escapeHtml(memoText || "내용 없음")}</p>
             <div class="issue-actions">
-              <button class="ghost-btn communication-edit" type="button">수정</button>
+              <button class="ghost-btn communication-edit ${canEditCommunicationEntry ? "" : "hidden"}" type="button">수정</button>
               <button class="ghost-btn danger communication-delete" type="button">삭제</button>
             </div>
           </div>
@@ -3845,19 +3898,19 @@ function renderCommunications(project) {
     };
 
     card.querySelector(".communication-edit").addEventListener("click", () => {
-      if (!canEditProjectCommunications()) return;
+      if (!canEditOwnEntry(entry, canEditProjectCommunications())) return;
       editingCommunicationId = entry.id;
       fillInputs();
       view.classList.add("hidden");
       editPanel.classList.remove("hidden");
       memoInput.focus();
     });
-    card.querySelector(".communication-cancel").addEventListener("click", () => {
-      if (!canEditProjectCommunications()) return;
+    card.querySelector(".communication-cancel").addEventListener("click", async () => {
+      if (!canEditOwnEntry(entry, canEditProjectCommunications())) return;
       if (!String(entry.memo || "").trim()) {
         project.communications = project.communications.filter((item) => item.id !== entry.id);
         editingCommunicationId = "";
-        persistEntry();
+        if (!isCreatingProject) await persistEntry();
         renderCommunications(project);
         return;
       }
@@ -3866,13 +3919,13 @@ function renderCommunications(project) {
       editPanel.classList.add("hidden");
       view.classList.remove("hidden");
     });
-    card.querySelector(".communication-save").addEventListener("click", () => {
-      if (!canEditProjectCommunications()) return;
+    card.querySelector(".communication-save").addEventListener("click", async () => {
+      if (!canEditOwnEntry(entry, canEditProjectCommunications())) return;
       entry.date = dateInput.value || todayDate();
       entry.memo = memoInput.value.trim();
       editingCommunicationId = "";
-      persistEntry();
-      renderCommunications(project);
+      await persistEntry();
+      renderCommunications(selectedProject() || project);
     });
     card.querySelector(".communication-delete").addEventListener("click", () => {
       if (!canDeleteProjectActivityEntries()) return;
@@ -3960,10 +4013,10 @@ function addIssue() {
       createdById: assignedProjectUserId(),
       createdByName: assignedProjectUserName(),
       resolved: false,
+      visibility: "visible",
     })
   );
   editingIssueId = id;
-  if (!isCreatingProject) void persist();
   renderIssues(project);
 }
 
@@ -4000,7 +4053,6 @@ function addCommunication() {
     createdByName: assignedProjectUserName(),
   });
   editingCommunicationId = id;
-  if (!isCreatingProject) void persist();
   renderCommunications(project);
 }
 
@@ -7058,3 +7110,9 @@ initializeApp().catch((error) => {
   console.error(error);
   alert("프로젝트 데이터를 불러오지 못했습니다. 데이터 파일을 확인해 주세요.");
 });
+
+
+
+
+
+

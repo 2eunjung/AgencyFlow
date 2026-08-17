@@ -1204,6 +1204,7 @@ def issue_signature(issue):
         "status": issue.get("status") or "",
         "type": issue.get("type") or "",
         "resolved": bool(issue.get("resolved") or issue.get("completed")),
+        "visibility": normalize_issue_visibility(issue.get("visibility")),
     }, ensure_ascii=False, sort_keys=True)
 
 
@@ -1222,6 +1223,8 @@ def issue_log_summary(previous, current, action):
     after_type = str((current or {}).get("type") or "").strip()
     if before_type != after_type:
         return "이슈 유형 변경"
+    if normalize_issue_visibility((previous or {}).get("visibility")) != normalize_issue_visibility((current or {}).get("visibility")):
+        return "이슈 노출 여부 변경"
     before_resolved = bool((previous or {}).get("resolved") or (previous or {}).get("completed"))
     after_resolved = bool((current or {}).get("resolved") or (current or {}).get("completed"))
     if before_resolved != after_resolved:
@@ -1352,7 +1355,24 @@ def user_can_manage_project_quote(user):
     return is_admin(user) or user_in_department(user, "영업", "경영관리")
 
 
-def merge_entries_without_delete(existing_entries, incoming_entries):
+def normalize_issue_visibility(value):
+    return "private" if str(value or "").strip() == "private" else "visible"
+
+
+def user_can_view_private_issues(user):
+    return is_admin(user) or is_team_lead(user) or user_in_department(user, "영업", "pm")
+
+
+def entry_owned_by_user(entry, user):
+    if not isinstance(entry, dict) or not user:
+        return False
+    values = user_match_values(user)
+    owner_id = str(entry.get("createdById") or "").strip().lower()
+    owner_name = str(entry.get("createdByName") or "").strip().lower()
+    return bool((owner_id and owner_id in values) or (not owner_id and owner_name and owner_name in values))
+
+
+def merge_entries_without_delete(existing_entries, incoming_entries, user=None, owner_only=False):
     incoming_by_id = {
         str(entry.get("id")): entry
         for entry in (incoming_entries or [])
@@ -1365,7 +1385,8 @@ def merge_entries_without_delete(existing_entries, incoming_entries):
             continue
         entry_id = str(entry.get("id") or "").strip()
         if entry_id and entry_id in incoming_by_id:
-            merged.append(incoming_by_id[entry_id])
+            candidate = incoming_by_id[entry_id]
+            merged.append(candidate if not owner_only or entry_owned_by_user(entry, user) else entry)
             used.add(entry_id)
         else:
             merged.append(entry)
@@ -1375,15 +1396,39 @@ def merge_entries_without_delete(existing_entries, incoming_entries):
         entry_id = str(entry.get("id") or "").strip()
         if entry_id and entry_id in used:
             continue
+        if owner_only and not entry_owned_by_user(entry, user):
+            continue
         merged.append(entry)
     return merged
+
+
+def merge_issue_entries_without_delete(existing_entries, incoming_entries, user=None):
+    merged = merge_entries_without_delete(existing_entries, incoming_entries, user, True)
+    existing_by_id = {
+        str(entry.get("id") or "").strip(): entry
+        for entry in existing_entries or []
+        if isinstance(entry, dict) and str(entry.get("id") or "").strip()
+    }
+    can_manage_visibility = user_can_view_private_issues(user)
+    sanitized = []
+    for entry in merged:
+        item = dict(entry)
+        entry_id = str(item.get("id") or "").strip()
+        if can_manage_visibility:
+            item["visibility"] = normalize_issue_visibility(item.get("visibility"))
+        elif entry_id and entry_id in existing_by_id:
+            item["visibility"] = normalize_issue_visibility(existing_by_id[entry_id].get("visibility"))
+        else:
+            item["visibility"] = "visible"
+        sanitized.append(item)
+    return sanitized
 
 
 def protect_admin_only_activity_fields(existing_project, incoming_project, user):
     item = dict(incoming_project)
     if not is_admin(user):
-        item["issues"] = merge_entries_without_delete(existing_project.get("issues") or [], incoming_project.get("issues") or []) if user_can_edit_project_issues(user) else existing_project.get("issues") or []
-        item["communications"] = merge_entries_without_delete(existing_project.get("communications") or [], incoming_project.get("communications") or []) if user_can_edit_project_communications(user) else existing_project.get("communications") or []
+        item["issues"] = merge_issue_entries_without_delete(existing_project.get("issues") or [], incoming_project.get("issues") or [], user) if user_can_edit_project_issues(user) else existing_project.get("issues") or []
+        item["communications"] = merge_entries_without_delete(existing_project.get("communications") or [], incoming_project.get("communications") or [], user, True) if user_can_edit_project_communications(user) else existing_project.get("communications") or []
     return item
 
 
@@ -1392,9 +1437,9 @@ def merge_project_activity_fields(existing_project, incoming_project, user):
     if user_can_edit_project_activity(user):
         item["clientContacts"] = incoming_project.get("clientContacts") or []
     if user_can_edit_project_issues(user):
-        item["issues"] = (incoming_project.get("issues") or []) if is_admin(user) else merge_entries_without_delete(existing_project.get("issues") or [], incoming_project.get("issues") or [])
+        item["issues"] = (incoming_project.get("issues") or []) if is_admin(user) else merge_issue_entries_without_delete(existing_project.get("issues") or [], incoming_project.get("issues") or [], user)
     if user_can_edit_project_communications(user):
-        item["communications"] = (incoming_project.get("communications") or []) if is_admin(user) else merge_entries_without_delete(existing_project.get("communications") or [], incoming_project.get("communications") or [])
+        item["communications"] = (incoming_project.get("communications") or []) if is_admin(user) else merge_entries_without_delete(existing_project.get("communications") or [], incoming_project.get("communications") or [], user, True)
     if user_can_manage_project_quote(user):
         item["quoteFileName"] = incoming_project.get("quoteFileName") or ""
         item["quoteFileData"] = incoming_project.get("quoteFileData") or ""
@@ -1816,10 +1861,21 @@ def user_can_access_project(user, project):
     return user_assigned_to_project(user, project)
 
 
+def filter_project_issues_for_user(project, user):
+    if not isinstance(project, dict) or user_can_view_private_issues(user):
+        return project
+    item = dict(project)
+    item["issues"] = [
+        issue
+        for issue in (project.get("issues") or [])
+        if not isinstance(issue, dict) or normalize_issue_visibility(issue.get("visibility")) != "private"
+    ]
+    return item
+
+
 def filter_projects_for_user(projects, user):
-    if user_can_view_all_projects(user):
-        return projects
-    return [project for project in projects if user_can_access_project(user, project)]
+    visible_projects = projects if user_can_view_all_projects(user) else [project for project in projects if user_can_access_project(user, project)]
+    return [filter_project_issues_for_user(project, user) for project in visible_projects]
 
 
 def schedule_project_payload(project):
@@ -2493,3 +2549,5 @@ def run(port=8766):
 
 if __name__ == "__main__":
     run(int(os.environ.get("PORT", "8766")))
+
+
