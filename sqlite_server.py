@@ -1,4 +1,4 @@
-﻿import base64
+import base64
 import hashlib
 import hmac
 import secrets
@@ -1295,6 +1295,38 @@ def build_project_logs_from_diff(before_projects, after_projects):
     return logs[:200]
 
 
+def user_can_complete_project_schedule(user):
+    return is_admin(user) or user_in_department(user, "pm")
+
+
+def user_can_edit_schedule_note(user):
+    return is_admin(user) or user_in_department(user, "pm")
+
+
+def sanitize_schedule_entry_for_user(existing_entry, incoming_entry, user):
+    item = dict(incoming_entry)
+    existing = existing_entry if isinstance(existing_entry, dict) else {}
+    was_completed = bool(existing.get("completed"))
+    if user_can_complete_project_schedule(user):
+        completed = bool(item.get("completed"))
+    else:
+        completed = bool(existing.get("completed"))
+    if was_completed:
+        locked = dict(existing)
+        locked["completed"] = completed
+        history = item.get("history") if isinstance(item.get("history"), list) else existing.get("history")
+        locked["history"] = history if isinstance(history, list) else []
+        return locked
+    item["completed"] = completed
+    if user_can_edit_schedule_note(user):
+        item["note"] = str(item.get("note") or "")
+    else:
+        item["note"] = str(existing.get("note") or "")
+    history = item.get("history") if isinstance(item.get("history"), list) else existing.get("history")
+    item["history"] = history if isinstance(history, list) else []
+    return item
+
+
 def schedule_owned_by_user(entry, user):
     if not isinstance(entry, dict) or not user:
         return False
@@ -1306,9 +1338,10 @@ def schedule_owned_by_user(entry, user):
 
 
 def merge_schedule_entries_for_user(existing_project, incoming_project, user):
-    if user_in_department(user, "pm") or user_can_edit_projects(user):
-        return incoming_project.get("schedules") or []
-    if not user_assigned_to_project(user, existing_project):
+    if is_admin(user):
+        existing_by_id = {str(entry.get("id") or "").strip(): entry for entry in existing_project.get("schedules") or [] if isinstance(entry, dict)}
+        return [sanitize_schedule_entry_for_user(existing_by_id.get(str(entry.get("id") or "").strip()), entry, user) for entry in incoming_project.get("schedules") or [] if isinstance(entry, dict)]
+    if not (user_in_department(user, "pm") or user_assigned_to_project(user, existing_project)):
         return existing_project.get("schedules") or []
 
     existing_entries = existing_project.get("schedules") or []
@@ -1324,7 +1357,8 @@ def merge_schedule_entries_for_user(existing_project, incoming_project, user):
         entry_id = str(entry.get("id") or "").strip() if isinstance(entry, dict) else ""
         if entry_id and entry_id in incoming_by_id:
             candidate = incoming_by_id[entry_id]
-            merged.append(candidate if schedule_owned_by_user(candidate, user) else entry)
+            can_update = user_in_department(user, "pm") or schedule_owned_by_user(candidate, user)
+            merged.append(sanitize_schedule_entry_for_user(entry, candidate, user) if can_update else entry)
             used.add(entry_id)
         else:
             merged.append(entry)
@@ -1334,10 +1368,9 @@ def merge_schedule_entries_for_user(existing_project, incoming_project, user):
         entry_id = str(entry.get("id") or "").strip()
         if entry_id and entry_id in used:
             continue
-        if schedule_owned_by_user(entry, user):
-            merged.append(entry)
+        if user_in_department(user, "pm") or schedule_owned_by_user(entry, user):
+            merged.append(sanitize_schedule_entry_for_user({}, entry, user))
     return merged
-
 
 def user_can_edit_project_activity(user):
     return user_can_edit_projects(user) or user_in_department(user, "영업")
@@ -1429,6 +1462,7 @@ def protect_admin_only_activity_fields(existing_project, incoming_project, user)
     if not is_admin(user):
         item["issues"] = merge_issue_entries_without_delete(existing_project.get("issues") or [], incoming_project.get("issues") or [], user) if user_can_edit_project_issues(user) else existing_project.get("issues") or []
         item["communications"] = merge_entries_without_delete(existing_project.get("communications") or [], incoming_project.get("communications") or [], user, True) if user_can_edit_project_communications(user) else existing_project.get("communications") or []
+        item["schedules"] = merge_schedule_entries_for_user(existing_project, incoming_project, user)
     return item
 
 
@@ -2549,5 +2583,4 @@ def run(port=8766):
 
 if __name__ == "__main__":
     run(int(os.environ.get("PORT", "8766")))
-
 

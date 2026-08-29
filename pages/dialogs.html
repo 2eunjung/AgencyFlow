@@ -193,6 +193,13 @@
             <input id="scheduleCompletedInput" type="checkbox" />
             완료
           </label>
+          <label id="scheduleNoteField" class="hidden">비고
+            <textarea id="scheduleNoteInput" class="schedule-dialog-input" placeholder="일정 비고 입력" rows="3"></textarea>
+          </label>
+          <details id="scheduleHistoryField" class="schedule-history-field hidden">
+            <summary>일정 히스토리</summary>
+            <div id="scheduleHistoryList" class="schedule-history-list"></div>
+          </details>
           <div class="schedule-dialog-actions">
             <button id="scheduleProjectDetailButton" class="ghost-btn hidden" type="button">프로젝트 상세</button>
             <button id="scheduleSubmitButton" class="primary-btn" type="submit">일정 추가</button>

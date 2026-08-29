@@ -1,4 +1,4 @@
-﻿
+
 :root {
   --topbar: #3f3f3f;
   --sidebar: #dceee7;
@@ -1576,6 +1576,14 @@ legend {
   background: var(--soft);
 }
 
+
+.issue-card.is-issue-private {
+  border-color: #f9a8d4;
+}
+
+.issue-card.is-issue-private:not(.is-issue-resolved) {
+  box-shadow: inset 0 0 0 1px rgba(244, 114, 182, 0.18);
+}
 .issue-card textarea {
   min-height: 78px;
   resize: vertical;
@@ -3596,6 +3604,92 @@ body.detail-open .issue-projects-table tbody tr.selected {
 }
 
 
+.schedule-dialog-body textarea.schedule-dialog-input {
+  min-height: 76px;
+  resize: vertical;
+}
+
+.schedule-history-field {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.schedule-history-field summary {
+  padding: 10px 12px;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  user-select: none;
+}
+
+.schedule-history-list {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 0 12px 12px;
+}
+
+.schedule-history-item {
+  display: grid;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--soft);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.schedule-history-head {
+  display: grid;
+  grid-template-columns: 142px 64px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  line-height: 1.4;
+}
+
+.schedule-history-head span {
+  color: var(--muted);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.schedule-history-head strong {
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.schedule-history-head p {
+  margin: 0;
+  min-width: 0;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.schedule-history-detail {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 4px 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+  line-height: 1.5;
+}
+
+.schedule-history-detail span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.schedule-history-detail p {
+  margin: 0;
+  min-width: 0;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .schedule-dialog-actions {
   display: flex;
   justify-content: space-between;
@@ -3684,7 +3778,4 @@ body.detail-open .issue-projects-table tbody tr.selected {
   background: transparent;
   border: 0;
 }
-
-
-
 

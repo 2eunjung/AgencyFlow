@@ -1,4 +1,4 @@
-﻿const APP_CRYPTO_SECRET = "pm-dashboard-portfolio-crypto-v1";
+const APP_CRYPTO_SECRET = "pm-dashboard-portfolio-crypto-v1";
 const APP_CRYPTO_SALT = "pm-dashboard-salt-v1";
 const PASSWORD_HASH_PREFIX = "pbkdf2:100000:";
 const SESSION_TOKEN_KEY = "project_session_token";
@@ -771,6 +771,8 @@ function normalizeScheduleEntry(project, entry) {
     createdByName: entry?.createdByName || "",
     createdAt: entry?.createdAt || "",
     completed: Boolean(entry?.completed),
+    note: entry?.note || "",
+    history: Array.isArray(entry?.history) ? entry.history : [],
   };
 }
 
@@ -1355,11 +1357,107 @@ function canViewProjectScheduleEntry(entry) {
 
 function canManageProjectScheduleEntry(project, entry = null) {
   if (!currentUser) return false;
-  if (canManageAllProjectSchedules()) return true;
+  if (canManageAllProjectSchedules() || isDepartment("pm")) return true;
   if (!project || !canUseAssignedProjectSchedules() || !isAssignedProject(project)) return false;
   return entry ? scheduleEntryOwnedByCurrentUser(entry) : true;
 }
+function canCompleteProjectScheduleEntry(project, entry = null) {
+  if (!currentUser || !project) return false;
+  if (!(isAdmin() || isDepartment("pm"))) return false;
+  return entry ? canViewProjectScheduleEntry(entry) : canCreateProjectSchedule(project);
+}
 
+function canViewScheduleNote() {
+  return isAdmin() || isTeamLead() || isDepartment("pm");
+}
+
+function canEditScheduleNote() {
+  return isAdmin() || isDepartment("pm");
+}
+
+function scheduleHistoryActor() {
+  return assignedProjectUserName() || assignedProjectUserId() || "-";
+}
+
+function scheduleHistoryEntry(action, detail = "", snapshot = {}) {
+  return {
+    id: crypto.randomUUID(),
+    action,
+    detail,
+    scheduleDate: String(snapshot?.date || ""),
+    scheduleDetail: String(snapshot?.detail || ""),
+    actorId: assignedProjectUserId(),
+    actorName: scheduleHistoryActor(),
+    at: new Date().toISOString(),
+  };
+}
+
+function scheduleHistorySnapshot(entry) {
+  return {
+    date: String(entry?.date || ""),
+    detail: String(entry?.detail || ""),
+  };
+}
+
+function scheduleCoreSignature(entry) {
+  return JSON.stringify({
+    date: String(entry?.date || ""),
+    projectId: String(entry?.projectId || ""),
+    milestone: String(entry?.milestone || ""),
+    staffRole: String(entry?.staffRole || ""),
+    staffName: String(entry?.staffName || ""),
+    detail: String(entry?.detail || ""),
+  });
+}
+
+function formatDateTime(value) {
+  const text = String(value || "").trim();
+  if (!text) return "-";
+  const normalized = text.replace("T", " ").slice(0, 19);
+  return normalized || "-";
+}
+
+function scheduleHistoryLabel(history) {
+  return String(history?.action || "").trim() || "일정 수정";
+}
+
+function scheduleHistoryContent(history) {
+  const date = String(history?.scheduleDate || "").trim();
+  const detail = String(history?.scheduleDetail || "").trim();
+  if (date || detail) return { date, detail };
+  const legacy = String(history?.detail || "").trim();
+  const parts = legacy.split(" · ");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(parts[0] || "")) {
+    return { date: parts[0], detail: parts.slice(1).join(" · ") };
+  }
+  return { date: "", detail: legacy };
+}
+
+function renderScheduleHistoryList(entry) {
+  const list = $("scheduleHistoryList");
+  if (!list) return;
+  const rows = [...(entry?.history || [])].sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
+  list.innerHTML = rows.length
+    ? rows.map((history) => {
+        const content = scheduleHistoryContent(history);
+        const label = scheduleHistoryLabel(history);
+        const showDetail = !(label === "일정 완료" || label === "일정 완료 취소");
+        return `<div class="schedule-history-item">
+          <div class="schedule-history-head">
+            <span>${escapeHtml(formatDateTime(history.at || ""))}</span>
+            <strong>${escapeHtml(history.actorName || "-")}</strong>
+            <p>${escapeHtml(label)}</p>
+          </div>
+          ${showDetail ? `<div class="schedule-history-detail">
+            <span>일자</span>
+            <p>${escapeHtml(content.date || "-")}</p>
+            <span>상세</span>
+            <p>${escapeHtml(content.detail || "-")}</p>
+          </div>` : ""}
+        </div>`;
+      }).join("")
+    : '<p class="empty">등록된 히스토리가 없습니다.</p>';
+}
 function canViewDashboardProjectMetrics() {
   return isAdmin() || isDepartment("pm");
 }
@@ -2250,12 +2348,13 @@ function renderFilters() {
 
 
 function renderDashboardScheduleItem(entry) {
-  const canToggle = canEditProjectDetail();
+  const project = findProjectByScheduleInput(entry.projectId);
+  const canToggle = canCompleteProjectScheduleEntry(project, entry);
   return `<article class="dashboard-schedule-item" data-dashboard-schedule-id="${escapeAttr(entry.id)}">
-    <label class="dashboard-schedule-check" title="완료">
-      <input class="dashboard-schedule-check-input" type="checkbox" data-dashboard-schedule-complete="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} ${canToggle ? "" : "disabled"} />
+    ${canToggle ? `<label class="dashboard-schedule-check" title="완료">
+      <input class="dashboard-schedule-check-input" type="checkbox" data-dashboard-schedule-complete="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} />
       <span class="dashboard-schedule-check-text">완료</span>
-    </label>
+    </label>` : ""}
     <div class="dashboard-schedule-body">
       <div class="dashboard-schedule-title-row">
         <strong class="dashboard-schedule-name">${escapeHtml(entry.projectName || "-")}</strong>
@@ -2269,10 +2368,14 @@ function renderDashboardScheduleItem(entry) {
 function toggleScheduleCompleted(entryId, completed) {
   const targetProject = projects.find((project) => (project.schedules || []).some((entry) => entry.id === entryId));
   const targetEntry = targetProject ? (targetProject.schedules || []).find((entry) => entry.id === entryId) : null;
-  if (!canManageProjectScheduleEntry(targetProject, targetEntry)) return false;
+  if (!canCompleteProjectScheduleEntry(targetProject, targetEntry)) return false;
   projects.forEach((project) => {
     (project.schedules || []).forEach((entry) => {
-      if (entry.id === entryId) entry.completed = Boolean(completed);
+      if (entry.id === entryId) {
+        entry.completed = Boolean(completed);
+        entry.history = Array.isArray(entry.history) ? entry.history : [];
+        entry.history.push(scheduleHistoryEntry(completed ? "일정 완료" : "일정 완료 취소", "", scheduleHistorySnapshot(entry)));
+      }
     });
   });
   persistEntry();
@@ -3309,13 +3412,13 @@ function renderIssues(project) {
       const canEditIssueEntry = canEditOwnEntry(issue, canEditProjectIssues());
       const visibility = normalizeIssueVisibility(issue.visibility);
       return `
-        <article class="issue-card${resolved ? " is-issue-resolved" : ""}" data-issue-id="${issue.id}">
+        <article class="issue-card${resolved ? " is-issue-resolved" : ""}${visibility === "private" ? " is-issue-private" : ""}" data-issue-id="${issue.id}">
           <div class="issue-view ${isEditing ? "hidden" : ""}">
             <div class="entry-card-head issue-view-head">
               <div class="issue-head-main entry-card-head-main issue-meta-row">
                 <span class="issue-author">${escapeHtml(entryAuthorName(issue))}</span>
                 <span class="issue-date">${escapeHtml(formatDate(issue.date))}</span>
-                ${visibility === "private" ? '<span class="issue-visibility-badge">비노출</span>' : ""}
+                ${visibility === "private" ? '<span class="issue-visibility-badge">숨김</span>' : ""}
                 ${issue.status ? `<span class="issue-status-badge">${escapeHtml(issue.status)}</span>` : ""}
                 ${issue.type ? `<span class="issue-type-badge">${escapeHtml(issue.type)}</span>` : ""}
               </div>
@@ -3331,7 +3434,7 @@ function renderIssues(project) {
               <label class="${canManageIssueVisibility() ? "" : "hidden"}">노출 여부
                 <select class="issue-visibility-input">
                   <option value="visible" ${visibility === "visible" ? "selected" : ""}>노출</option>
-                  <option value="private" ${visibility === "private" ? "selected" : ""}>비노출</option>
+                  <option value="private" ${visibility === "private" ? "selected" : ""}>숨김</option>
                 </select>
               </label>
               <label>이슈상태
@@ -5968,9 +6071,7 @@ function renderScheduleCalendarGrid() {
       event.stopPropagation();
       if (document.body.classList.contains("schedule-detail-open")) closeDetail();
       const entry = allScheduleEntries().find((row) => row.id === item.dataset.scheduleEntryId);
-      const project = entry ? findProjectByScheduleInput(entry.projectId) : null;
-      if (entry && canManageProjectScheduleEntry(project, entry)) openScheduleDialog(entry.date || todayDate(), { editingEntry: entry });
-      else if (entry) showScheduleProjectDetail(entry);
+      if (entry && canViewProjectScheduleEntry(entry)) openScheduleDialog(entry.date || todayDate(), { editingEntry: entry, projectId: entry.projectId });
     });
   });
   grid.querySelectorAll("[data-schedule-date]").forEach((item) => {
@@ -6001,7 +6102,7 @@ function renderScheduleListRows() {
   tbody.innerHTML = rows.length
     ? rows.map((entry) => {
         const project = findProjectByScheduleInput(entry.projectId);
-        const canToggle = canManageProjectScheduleEntry(project, entry);
+        const canToggle = canCompleteProjectScheduleEntry(project, entry);
         return `<tr data-schedule-entry-id="${escapeAttr(entry.id)}" class="${entry.completed ? "is-schedule-completed" : ""}">
         <td>${escapeHtml(entry.date || "-")}</td>
         <td class="schedule-project-name-cell">${escapeHtml(entry.projectName || "-")}</td>
@@ -6009,9 +6110,9 @@ function renderScheduleListRows() {
         <td><span class="schedule-staff-badge">${escapeHtml(scheduleStaffBadgeText(entry))}</span></td>
         <td>${escapeHtml(entry.detail || "-")}</td>
         <td class="schedule-list-complete-cell">
-          <label class="schedule-list-complete" title="완료">
-            <input type="checkbox" class="schedule-list-complete-input" data-schedule-entry-id="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} ${canToggle ? "" : "disabled"} />
-          </label>
+          ${canToggle ? `<label class="schedule-list-complete" title="완료">
+            <input type="checkbox" class="schedule-list-complete-input" data-schedule-entry-id="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} />
+          </label>` : ""}
         </td>
       </tr>`;
       }).join("")
@@ -6030,9 +6131,7 @@ function renderScheduleListRows() {
       event.stopPropagation();
       if (document.body.classList.contains("schedule-detail-open")) closeDetail();
       const entry = allScheduleEntries().find((item) => item.id === row.dataset.scheduleEntryId);
-      const project = entry ? findProjectByScheduleInput(entry.projectId) : null;
-      if (entry && canManageProjectScheduleEntry(project, entry)) openScheduleDialog(entry.date || todayDate(), { editingEntry: entry });
-      else if (entry) showScheduleProjectDetail(entry);
+      if (entry && canViewProjectScheduleEntry(entry)) openScheduleDialog(entry.date || todayDate(), { editingEntry: entry, projectId: entry.projectId });
     });
   });
 }
@@ -6045,7 +6144,7 @@ function renderScheduleViews() {
 }
 
 function findProjectByScheduleInput(projectId) {
-  const source = canManageAllProjectSchedules() ? projects : projects.filter(isAssignedProject);
+  const source = canViewAllProjectSchedules() ? projects : projects.filter(isAssignedProject);
   return source.find((project) => project.id === projectId) || null;
 }
 
@@ -6112,25 +6211,33 @@ function syncScheduleAssignFieldsVisibility() {
 }
 
 function openScheduleDialog(date = todayDate(), options = {}) {
-  const editingEntry = options.editingEntry || null;
+  const editingEntry = options.editingEntry ? normalizeScheduleEntry(findProjectByScheduleInput(options.editingEntry.projectId) || {}, options.editingEntry) : null;
   scheduleDialogEditId = editingEntry?.id || "";
   const presetProjectId = editingEntry?.projectId || options.projectId || "";
   const project = presetProjectId ? findProjectByScheduleInput(presetProjectId) : null;
-  const canOpen = editingEntry
-    ? canManageProjectScheduleEntry(project, editingEntry)
-    : project
-      ? canCreateProjectSchedule(project)
-      : Boolean(currentUser && (canManageAllProjectSchedules() || canUseAssignedProjectSchedules()));
+  const scheduleLocked = Boolean(editingEntry?.completed);
+  const canEditCore = !scheduleLocked && (editingEntry ? canManageProjectScheduleEntry(project, editingEntry) : (project ? canCreateProjectSchedule(project) : Boolean(currentUser && (canManageAllProjectSchedules() || canUseAssignedProjectSchedules()))));
+  const canComplete = Boolean(editingEntry && canCompleteProjectScheduleEntry(project, editingEntry));
+  const canViewNote = canViewScheduleNote();
+  const canEditNote = Boolean(editingEntry && !scheduleLocked && canEditScheduleNote() && canViewProjectScheduleEntry(editingEntry));
+  const canOpen = editingEntry ? canViewProjectScheduleEntry(editingEntry) : canEditCore;
   if (!canOpen) {
-    alert("현재 계정은 프로젝트 일정을 등록하거나 수정할 권한이 없습니다.");
+    alert("현재 계정은 이 프로젝트 일정을 확인할 권한이 없습니다.");
     return;
   }
-  setText("scheduleDialogTitle", editingEntry ? "일정 수정" : "일정 추가");
-  setText("scheduleDialogDate", `${date} 일정을 ${editingEntry ? "수정" : "등록"}합니다.`);
+  setText("scheduleDialogTitle", scheduleLocked ? "일정 확인" : editingEntry ? "일정 수정" : "일정 추가");
+  setText("scheduleDialogDate", `${date} 일정을 ${editingEntry ? "확인" : "등록"}합니다.`);
   setValue("scheduleDateInput", editingEntry?.date || date);
   setValue("scheduleDetailInput", editingEntry?.detail || "");
-  $("scheduleCompletedField")?.classList.toggle("hidden", !editingEntry);
+  setValue("scheduleNoteInput", editingEntry?.note || "");
+  $("scheduleCompletedField")?.classList.toggle("hidden", !canComplete);
   setChecked("scheduleCompletedInput", Boolean(editingEntry?.completed));
+  if ($("scheduleCompletedInput")) $("scheduleCompletedInput").disabled = !canComplete;
+  $("scheduleNoteField")?.classList.toggle("hidden", !editingEntry || !canViewNote);
+  if ($("scheduleNoteInput")) $("scheduleNoteInput").disabled = !canEditNote;
+  $("scheduleHistoryField")?.classList.toggle("hidden", !editingEntry || !canViewNote);
+  if ($("scheduleHistoryField")) $("scheduleHistoryField").open = false;
+  renderScheduleHistoryList(editingEntry);
   if ($("scheduleMilestoneSelect")) {
     $("scheduleMilestoneSelect").innerHTML =
       `<option value=""></option>` +
@@ -6157,12 +6264,17 @@ function openScheduleDialog(date = todayDate(), options = {}) {
     setValue("scheduleStaffRoleSelect", "PM");
     setValue("scheduleStaffNameInput", "");
   }
+  ["scheduleDateInput", "scheduleProjectSearch", "scheduleMilestoneSelect", "scheduleStaffRoleSelect", "scheduleStaffNameInput", "scheduleDetailInput"].forEach((id) => {
+    const field = $(id);
+    if (field) field.disabled = !canEditCore;
+  });
   if ($("scheduleProjectResults")) {
     $("scheduleProjectResults").hidden = true;
     $("scheduleProjectResults").innerHTML = "";
   }
   $("scheduleProjectDetailButton")?.classList.toggle("hidden", !editingEntry);
-  $("scheduleSubmitButton").textContent = editingEntry ? "일정 수정" : "일정 추가";
+  $("scheduleSubmitButton")?.classList.toggle("hidden", !(canEditCore || canComplete || canEditNote));
+  $("scheduleSubmitButton").textContent = editingEntry ? "저장" : "일정 추가";
   syncScheduleAssignFieldsVisibility();
   $("scheduleDialog")?.showModal();
 }
@@ -6194,31 +6306,51 @@ async function submitScheduleForm(event) {
     return;
   }
   const previousEntry = scheduleDialogEditId ? (project.schedules || []).find((entry) => entry.id === scheduleDialogEditId) : null;
-  if (!canManageProjectScheduleEntry(project, previousEntry)) {
-    alert("현재 계정은 이 일정을 등록하거나 수정할 권한이 없습니다.");
+  const scheduleLocked = Boolean(previousEntry?.completed);
+  const canEditCore = !scheduleLocked && (previousEntry ? canManageProjectScheduleEntry(project, previousEntry) : canCreateProjectSchedule(project));
+  const canComplete = Boolean(previousEntry && canCompleteProjectScheduleEntry(project, previousEntry));
+  const canEditNote = Boolean(previousEntry && !scheduleLocked && canEditScheduleNote() && canViewProjectScheduleEntry(previousEntry));
+  if (!canEditCore && !canComplete && !canEditNote) {
+    alert("현재 계정은 이 일정을 수정할 권한이 없습니다.");
     return;
   }
-  const detail = valueOf("scheduleDetailInput").trim();
+  const detail = canEditCore ? valueOf("scheduleDetailInput").trim() : String(previousEntry?.detail || "").trim();
   if (!detail) {
     alert("상세 내용을 입력해 주세요.");
     return;
   }
   const currentStaff = !scheduleDialogEditId ? scheduleStaffForCurrentUser(project) : null;
+  const previousHistory = Array.isArray(previousEntry?.history) ? [...previousEntry.history] : [];
   const entry = {
     id: scheduleDialogEditId || crypto.randomUUID(),
-    date: valueOf("scheduleDateInput") || todayDate(),
+    date: canEditCore ? valueOf("scheduleDateInput") || todayDate() : previousEntry?.date || todayDate(),
     projectId: project.id,
     projectNo: project.projectNo || "",
     projectName: project.name || "",
-    milestone: valueOf("scheduleMilestoneSelect") || projectMilestone(project) || "",
-    staffRole: currentStaff?.staffRole || valueOf("scheduleStaffRoleSelect") || "PM",
-    staffName: currentStaff?.staffName || valueOf("scheduleStaffNameInput").trim(),
+    milestone: canEditCore ? valueOf("scheduleMilestoneSelect") || projectMilestone(project) || "" : previousEntry?.milestone || projectMilestone(project) || "",
+    staffRole: canEditCore ? currentStaff?.staffRole || valueOf("scheduleStaffRoleSelect") || "PM" : previousEntry?.staffRole || "PM",
+    staffName: canEditCore ? currentStaff?.staffName || valueOf("scheduleStaffNameInput").trim() : previousEntry?.staffName || "",
     detail,
     createdById: previousEntry?.createdById || assignedProjectUserId(),
     createdByName: previousEntry?.createdByName || assignedProjectUserName(),
     createdAt: previousEntry?.createdAt || new Date().toISOString(),
-    completed: scheduleDialogEditId ? checkedOf("scheduleCompletedInput") : false,
+    completed: canComplete ? checkedOf("scheduleCompletedInput") : Boolean(previousEntry?.completed),
+    note: canEditNote ? valueOf("scheduleNoteInput").trim() : previousEntry?.note || "",
+    history: previousHistory,
   };
+  if (!previousEntry) {
+    entry.history.push(scheduleHistoryEntry("일정 등록", "", scheduleHistorySnapshot(entry)));
+  } else {
+    if (canEditCore && scheduleCoreSignature(previousEntry) !== scheduleCoreSignature(entry)) {
+      entry.history.push(scheduleHistoryEntry("일정 수정", "", scheduleHistorySnapshot(entry)));
+    }
+    if (canComplete && Boolean(previousEntry.completed) !== Boolean(entry.completed)) {
+      entry.history.push(scheduleHistoryEntry(entry.completed ? "일정 완료" : "일정 완료 취소", "", scheduleHistorySnapshot(entry)));
+    }
+    if (canEditNote && String(previousEntry.note || "") !== String(entry.note || "")) {
+      entry.history.push(scheduleHistoryEntry("비고 수정", "", scheduleHistorySnapshot(entry)));
+    }
+  }
   if (scheduleDialogEditId) removeScheduleEntry(scheduleDialogEditId);
   saveScheduleEntryToProject(project, entry);
   focusScheduleCursorOnDate(entry.date);
@@ -6247,21 +6379,22 @@ function renderProjectSchedules(project) {
   list.innerHTML = rows.length
     ? rows.map((entry) => {
         const canManageEntry = canManageProjectScheduleEntry(project, entry);
+        const canCompleteEntry = canCompleteProjectScheduleEntry(project, entry);
         return `<article class="communication-card project-schedule-card${entry.completed ? " is-schedule-completed" : ""}" data-detail-schedule-id="${escapeAttr(entry.id)}">
         <div class="communication-view">
           <div class="entry-card-head">
             <div class="project-schedule-head entry-card-head-main">
-              <label class="project-schedule-complete check-option">
-                <input type="checkbox" class="project-schedule-complete-input" data-schedule-entry-id="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} ${canManageEntry ? "" : "disabled"} />
+              ${canCompleteEntry ? `<label class="project-schedule-complete check-option">
+                <input type="checkbox" class="project-schedule-complete-input" data-schedule-entry-id="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} />
                 <span>완료</span>
-              </label>
+              </label>` : ""}
               <span class="project-schedule-date">${escapeHtml(entry.date || "-")}</span>
               <span class="schedule-milestone-badge">${escapeHtml(entry.milestone || "-")}</span>
               <span class="schedule-staff-badge">${escapeHtml(scheduleStaffBadgeText(entry))}</span>
             </div>
             <div class="entry-card-head-actions">
-              <button class="ghost-btn project-schedule-edit${canManageEntry ? "" : " hidden"}" type="button">수정</button>
-              <button class="ghost-btn danger project-schedule-delete${canManageEntry ? "" : " hidden"}" type="button">삭제</button>
+              <button class="ghost-btn project-schedule-edit${canManageEntry && !entry.completed ? "" : " hidden"}" type="button">수정</button>
+              <button class="ghost-btn danger project-schedule-delete${isAdmin() ? "" : " hidden"}" type="button">삭제</button>
             </div>
           </div>
           <p class="issue-text">${escapeHtml(entry.detail || "일정")}</p>
@@ -6281,14 +6414,19 @@ function renderProjectSchedules(project) {
       }
     });
     card.querySelector(".project-schedule-edit")?.addEventListener("click", () => {
-      if (!canManageProjectScheduleEntry(project, entry)) return;
+      if (!canViewProjectScheduleEntry(entry)) return;
       openScheduleDialog(entry.date || todayDate(), { editingEntry: entry, projectId: project.id });
     });
-    card.querySelector(".project-schedule-delete")?.addEventListener("click", () => {
-      if (!canManageProjectScheduleEntry(project, entry)) return;
+    card.querySelector(".project-schedule-delete")?.addEventListener("click", async () => {
+      if (!isAdmin()) return;
       if (!confirm("이 일정을 삭제할까요?")) return;
       removeScheduleEntry(entry.id);
-      persistEntry();
+      try {
+        await persistEntry();
+      } catch (error) {
+        alert(error?.message || "일정을 삭제하지 못했습니다.");
+        return;
+      }
       renderProjectSchedules(project);
       renderScheduleViews();
       renderDashboard();
@@ -7110,9 +7248,4 @@ initializeApp().catch((error) => {
   console.error(error);
   alert("프로젝트 데이터를 불러오지 못했습니다. 데이터 파일을 확인해 주세요.");
 });
-
-
-
-
-
 
