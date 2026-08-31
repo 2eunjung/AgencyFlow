@@ -875,9 +875,7 @@ function isIssueResolved(issue) {
 function latestProjectIssue(project) {
   const issues = (project.issues || []).map(normalizeIssue);
   if (!issues.length) return null;
-  const active = issues.filter((issue) => !issue.resolved);
-  if (active.length) return active[0];
-  return issues[0];
+  return [...issues].sort((a, b) => entrySortTimestamp(b) - entrySortTimestamp(a))[0];
 }
 
 function buildIssueFieldOptions(options, selected, placeholder = "값을 선택해 주세요") {
@@ -1910,11 +1908,11 @@ function switchView(view) {
 }
 
 function projectDisplayStatus(project) {
-  return project.progressStatus || project.status || "미지정";
+  return project.status || project.progressStatus || "미지정";
 }
 
 function projectMilestone(project) {
-  return project.adminMilestone || project.milestone || "";
+  return project.milestone || project.adminMilestone || "";
 }
 
 function buildProjectSearchHaystack(project) {
@@ -2434,7 +2432,7 @@ function renderDashboardSchedules() {
 function renderDashboard() {
   const visible = accessibleProjects();
   const progressRows = progressProjects();
-  const issueProjectCount = visible.filter((project) => project.hasIssue).length;
+  const issueProjectCount = visible.filter((project) => project.hasIssue && !isClosedProject(project)).length;
   $("activeCount").textContent = visible.length.toLocaleString("ko-KR");
   $("feedbackCount").textContent = progressRows.length.toLocaleString("ko-KR");
   $("monthlyCount").textContent = visible.filter((project) => project.monthlyCollection).length.toLocaleString("ko-KR");
@@ -3908,20 +3906,30 @@ function renderProjectWorkStack(project) {
       view.classList.remove("hidden");
       renderProjectWorkStack(project);
     });
-    card.querySelector(".work-stack-save")?.addEventListener("click", () => {
+    card.querySelector(".work-stack-save")?.addEventListener("click", async () => {
       if (!isAdmin()) return;
       entry.at = fromDateTimeLocalValue(atInput.value) || entry.at || "";
       entry.memo = memoInput.value.trim();
       editingProjectWorkStackId = "";
-      persistEntry();
-      renderProjectWorkStack(project);
+      try {
+        await persistEntry();
+        renderAll(false);
+      } catch (error) {
+        alert(error?.message || "작업 스택을 저장하지 못했습니다.");
+        renderProjectWorkStack(project);
+      }
     });
-    card.querySelector(".work-stack-delete")?.addEventListener("click", () => {
+    card.querySelector(".work-stack-delete")?.addEventListener("click", async () => {
       if (!isAdmin()) return;
       project.completionFlow.history = project.completionFlow.history.filter((item) => item.id !== entry.id);
       editingProjectWorkStackId = "";
-      persistEntry();
-      renderProjectWorkStack(project);
+      try {
+        await persistEntry();
+        renderAll(false);
+      } catch (error) {
+        alert(error?.message || "작업 스택을 삭제하지 못했습니다.");
+        renderProjectWorkStack(project);
+      }
     });
   });
 }
@@ -5729,14 +5737,7 @@ async function deleteCompanyHoliday() {
 
 
 function issueProjects() {
-  return monthlyIssueProjectSource().filter(
-    (project) =>
-      project.hasIssue ||
-      (project.issues || []).some((issue) => {
-        const normalized = normalizeIssue(issue);
-        return !normalized.resolved && String(normalized.memo || "").trim();
-      })
-  );
+  return monthlyIssueProjectSource().filter((project) => project.hasIssue && !isClosedProject(project));
 }
 
 function latestIssueText(project) {
@@ -5777,8 +5778,8 @@ function renderIssueProjectRows() {
                   ${buildProjectFlagIcons(project)}
                 </div>
               </td>
-              <td><span class="issue-status-badge">${escapeHtml(latestIssue?.status || "-")}</span></td>
-              <td><span class="issue-type-badge">${escapeHtml(latestIssue?.type || "-")}</span></td>
+              <td><span class="badge milestone-badge">${escapeHtml(projectMilestone(project) || "-")}</span></td>
+              <td><span class="badge ${workStatusBadgeClass(projectDisplayStatus(project))}">${escapeHtml(projectDisplayStatus(project))}</span></td>
               <td>${escapeHtml(project.pm || "-")}</td>
               <td class="issue-summary-cell">${escapeHtml(latestIssueText(project))}</td>
               <td>${buildHomeAndIntranetShortcutActions(project)}</td>
@@ -6682,7 +6683,7 @@ function compareProjectAssignmentRows(a, b) {
   const pendingA = projectAssignmentPending(a);
   const pendingB = projectAssignmentPending(b);
   if (pendingA !== pendingB) return pendingA ? -1 : 1;
-  return compareProjectNo(a, b);
+  return compareProjectNo(b, a);
 }
 
 function canEditProjectAssignmentField(departments) {
@@ -6845,11 +6846,13 @@ function renderProjectAssignmentRows() {
   const tbody = $("projectAssignmentRows");
   if (!tbody) return;
   if (!canManageProjectAssignment()) {
+    setText("projectAssignmentTitle", "프로젝트 배정(0건)");
     tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">관리자 또는 팀장만 확인할 수 있습니다.</td></tr>';
     return;
   }
   populateProjectAssignmentFilters();
   const rows = filteredProjectAssignmentRows().sort(compareProjectAssignmentRows);
+  setText("projectAssignmentTitle", `프로젝트 배정(${rows.length.toLocaleString("ko-KR")}건)`);
   tbody.innerHTML = rows.length
     ? rows
         .map(
