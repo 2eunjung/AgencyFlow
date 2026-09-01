@@ -24,6 +24,28 @@ PASSWORD_HASH_PREFIX = f"pbkdf2:{PASSWORD_ITERATIONS}:"
 VALID_MODES = {"public", "private"}
 MAX_JSON_BODY_BYTES = 25 * 1024 * 1024
 MAX_PDF_BYTES = 10 * 1024 * 1024
+MAX_LIBRARY_FILE_BYTES = 5 * 1024 * 1024
+MAX_LIBRARY_FILES = 3
+LIBRARY_ALLOWED_EXTENSIONS = {
+    ".pdf": {"application/pdf"},
+    ".jpg": {"image/jpeg"},
+    ".jpeg": {"image/jpeg"},
+    ".png": {"image/png"},
+    ".gif": {"image/gif"},
+    ".webp": {"image/webp"},
+    ".txt": {"text/plain"},
+    ".csv": {"text/csv", "application/vnd.ms-excel"},
+    ".doc": {"application/msword", "application/octet-stream"},
+    ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip", "application/octet-stream"},
+    ".xls": {"application/vnd.ms-excel", "application/octet-stream"},
+    ".xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/zip", "application/octet-stream"},
+    ".ppt": {"application/vnd.ms-powerpoint", "application/octet-stream"},
+    ".pptx": {"application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/zip", "application/octet-stream"},
+}
+LIBRARY_BLOCKED_EXTENSIONS = {
+    ".html", ".htm", ".svg", ".js", ".mjs", ".cmd", ".bat", ".ps1", ".exe", ".dll", ".msi", ".scr", ".vbs",
+    ".php", ".py", ".rb", ".jar", ".sh", ".com", ".lnk", ".zip", ".7z", ".rar",
+}
 SESSION_TTL_SECONDS = 60 * 60
 SESSION_TOKEN_BYTES = 32
 LOGIN_FAILURE_LIMIT = 5
@@ -2219,6 +2241,316 @@ def records_as_json(conn, table, mode):
     return sorted((json.loads(row["data_json"]) for row in rows), key=project_sort_key)
 
 
+def app_state_json(conn, key, fallback):
+    row = conn.execute("SELECT value FROM app_state WHERE key = ?", (key,)).fetchone()
+    if not row:
+        return fallback
+    try:
+        value = json.loads(row["value"] or "")
+    except json.JSONDecodeError:
+        return fallback
+    return value if isinstance(value, type(fallback)) else fallback
+
+
+def save_app_state_json(conn, key, value):
+    conn.execute(
+        """
+        INSERT INTO app_state (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (key, json.dumps(value, ensure_ascii=False)),
+    )
+
+
+def project_library_posts(conn):
+    posts = app_state_json(conn, "project_library_posts", [])
+    return sorted((normalize_project_library_post(post) for post in posts), key=lambda post: post.get("createdAt", ""), reverse=True)
+
+
+def save_project_library_posts(conn, posts):
+    save_app_state_json(conn, "project_library_posts", [normalize_project_library_post(post) for post in posts])
+
+
+def normalize_project_library_post(post):
+    comments = post.get("comments") if isinstance(post, dict) else []
+    if not isinstance(comments, list):
+        comments = []
+    return {
+        "id": str((post or {}).get("id") or secrets.token_hex(8)),
+        "projectId": str((post or {}).get("projectId") or "").strip(),
+        "projectNo": str((post or {}).get("projectNo") or "").strip(),
+        "projectName": str((post or {}).get("projectName") or "").strip(),
+        "important": bool((post or {}).get("important")),
+        "title": str((post or {}).get("title") or "").strip(),
+        "url": str((post or {}).get("url") or "").strip(),
+        "content": str((post or {}).get("content") or "").strip(),
+        "attachments": normalize_project_library_attachments((post or {}).get("attachments")),
+        "createdById": str((post or {}).get("createdById") or "").strip(),
+        "createdByName": str((post or {}).get("createdByName") or "").strip(),
+        "createdAt": str((post or {}).get("createdAt") or "").strip(),
+        "updatedAt": str((post or {}).get("updatedAt") or "").strip(),
+        "comments": [normalize_project_library_comment(comment) for comment in comments],
+    }
+
+
+def normalize_project_library_comment(comment):
+    return {
+        "id": str((comment or {}).get("id") or secrets.token_hex(8)),
+        "content": str((comment or {}).get("content") or "").strip(),
+        "createdById": str((comment or {}).get("createdById") or "").strip(),
+        "createdByName": str((comment or {}).get("createdByName") or "").strip(),
+        "createdAt": str((comment or {}).get("createdAt") or "").strip(),
+    }
+
+
+def normalize_project_library_attachments(attachments):
+    if not isinstance(attachments, list):
+        return []
+    normalized = []
+    for file in attachments[:MAX_LIBRARY_FILES]:
+        if not isinstance(file, dict):
+            continue
+        name = safe_library_file_name(file.get("name"))
+        normalized.append({
+            "id": str(file.get("id") or secrets.token_hex(8)),
+            "name": name,
+            "type": str(file.get("type") or "application/octet-stream").strip()[:120],
+            "size": int(file.get("size") or 0),
+            "dataUrl": str(file.get("dataUrl") or ""),
+        })
+    return normalized
+
+
+def safe_library_file_name(name):
+    value = str(name or "첨부파일").strip().replace("\\", "_").replace("/", "_")
+    value = re.sub(r"[\x00-\x1f\x7f]+", "", value)
+    value = re.sub(r"\s+", " ", value).strip(" .")
+    return (value or "첨부파일")[:160]
+
+
+def decode_library_data_url(data_url):
+    value = str(data_url or "")
+    match = re.match(r"^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$", value, re.I)
+    if not match:
+        raise ValueError("첨부파일 형식이 올바르지 않습니다.")
+    mime_type = match.group(1).lower()
+    try:
+        data = base64.b64decode(re.sub(r"\s+", "", match.group(2)), validate=True)
+    except Exception:
+        raise ValueError("첨부파일 데이터가 올바르지 않습니다.")
+    return mime_type, data
+
+
+def library_file_extension(file_name):
+    return Path(str(file_name or "")).suffix.lower()
+
+
+def validate_library_file_signature(ext, data):
+    if ext == ".pdf":
+        if not data.startswith(b"%PDF-") or b"%%EOF" not in data[-2048:]:
+            raise ValueError("정상 PDF 파일이 아닙니다.")
+        scan = data[: min(len(data), 2 * 1024 * 1024)]
+        lowered = scan.lower()
+        for marker in PDF_DANGEROUS_MARKERS:
+            if marker.lower() in lowered:
+                raise ValueError("보안상 위험한 PDF 기능이 포함되어 업로드할 수 없습니다.")
+    elif ext in {".jpg", ".jpeg"} and not data.startswith(b"\xff\xd8\xff"):
+        raise ValueError("정상 JPG 파일이 아닙니다.")
+    elif ext == ".png" and not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("정상 PNG 파일이 아닙니다.")
+    elif ext == ".gif" and not (data.startswith(b"GIF87a") or data.startswith(b"GIF89a")):
+        raise ValueError("정상 GIF 파일이 아닙니다.")
+    elif ext == ".webp" and not (data.startswith(b"RIFF") and data[8:12] == b"WEBP"):
+        raise ValueError("정상 WEBP 파일이 아닙니다.")
+    elif ext in {".docx", ".xlsx", ".pptx"} and not data.startswith(b"PK\x03\x04"):
+        raise ValueError("정상 Office 문서 파일이 아닙니다.")
+
+
+def validate_project_library_attachments(attachments):
+    if isinstance(attachments, list) and len(attachments) > MAX_LIBRARY_FILES:
+        raise ValueError("첨부파일은 최대 3개까지 등록할 수 있습니다.")
+    files = normalize_project_library_attachments(attachments)
+    for file in files:
+        ext = library_file_extension(file["name"])
+        if ext in LIBRARY_BLOCKED_EXTENSIONS or ext not in LIBRARY_ALLOWED_EXTENSIONS:
+            raise ValueError("허용되지 않는 첨부파일 형식입니다.")
+        if file["size"] > MAX_LIBRARY_FILE_BYTES:
+            raise ValueError("첨부파일은 1개당 최대 5MB까지 등록할 수 있습니다.")
+        if file["size"] <= 0:
+            raise ValueError("빈 첨부파일은 등록할 수 없습니다.")
+        mime_type, data = decode_library_data_url(file["dataUrl"])
+        allowed_mimes = LIBRARY_ALLOWED_EXTENSIONS[ext]
+        if mime_type not in allowed_mimes:
+            raise ValueError("첨부파일 확장자와 파일 형식이 일치하지 않습니다.")
+        if len(data) != file["size"] or len(data) > MAX_LIBRARY_FILE_BYTES:
+            raise ValueError("첨부파일 크기가 올바르지 않습니다.")
+        validate_library_file_signature(ext, data)
+        file["type"] = mime_type
+        file["size"] = len(data)
+    return files
+
+
+def validate_project_library_url(url):
+    value = str(url or "").strip()
+    if not value:
+        return ""
+    if not re.match(r"^https?://", value, re.I):
+        value = f"https://{value}"
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("자료 URL은 http 또는 https 주소만 등록할 수 있습니다.")
+    return value[:500]
+
+
+def project_library_project(conn, mode, payload):
+    project_id = str(payload.get("projectId") or "").strip()
+    project_no = str(payload.get("projectNo") or "").strip()
+    projects = records_as_json(conn, "project_records", mode)
+    for project in projects:
+        if (project_id and str(project.get("id") or "") == project_id) or (project_no and str(project.get("projectNo") or "") == project_no):
+            return project
+    raise ValueError("프로젝트를 선택해 주세요.")
+
+
+def create_project_library_post(conn, mode, user, payload):
+    project = project_library_project(conn, mode, payload)
+    title = str(payload.get("title") or "").strip()
+    content = str(payload.get("content") or "").strip()
+    if not title or not content:
+        raise ValueError("제목과 내용을 입력해 주세요.")
+    attachments = validate_project_library_attachments(payload.get("attachments"))
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    posts = project_library_posts(conn)
+    posts.insert(0, {
+        "id": secrets.token_hex(12),
+        "projectId": str(project.get("id") or ""),
+        "projectNo": str(project.get("projectNo") or ""),
+        "projectName": str(project.get("name") or ""),
+        "important": bool(payload.get("important")),
+        "title": title[:120],
+        "url": validate_project_library_url(payload.get("url")),
+        "content": content[:3000],
+        "attachments": attachments,
+        "createdById": user.get("id", ""),
+        "createdByName": user.get("name", ""),
+        "createdAt": now,
+        "updatedAt": now,
+        "comments": [],
+    })
+    save_project_library_posts(conn, posts)
+
+
+def update_project_library_post(conn, mode, post_id, payload):
+    project = project_library_project(conn, mode, payload)
+    title = str(payload.get("title") or "").strip()
+    content = str(payload.get("content") or "").strip()
+    if not title or not content:
+        raise ValueError("제목과 내용을 입력해 주세요.")
+    attachments = validate_project_library_attachments(payload.get("attachments"))
+    posts = project_library_posts(conn)
+    changed = False
+    for post in posts:
+        if str(post.get("id") or "") != str(post_id):
+            continue
+        post.update({
+            "projectId": str(project.get("id") or ""),
+            "projectNo": str(project.get("projectNo") or ""),
+            "projectName": str(project.get("name") or ""),
+            "important": bool(payload.get("important")),
+            "title": title[:120],
+            "url": validate_project_library_url(payload.get("url")),
+            "content": content[:3000],
+            "attachments": attachments,
+            "updatedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
+        changed = True
+        break
+    if not changed:
+        raise ValueError("자료를 찾을 수 없습니다.")
+    save_project_library_posts(conn, posts)
+
+
+def delete_project_library_post(conn, post_id):
+    posts = project_library_posts(conn)
+    next_posts = [post for post in posts if str(post.get("id") or "") != str(post_id)]
+    if len(next_posts) == len(posts):
+        raise ValueError("자료를 찾을 수 없습니다.")
+    save_project_library_posts(conn, next_posts)
+
+
+def add_project_library_comment(conn, post_id, user, payload):
+    content = str(payload.get("content") or "").strip()
+    if not content:
+        raise ValueError("댓글 내용을 입력해 주세요.")
+    posts = project_library_posts(conn)
+    changed = False
+    for post in posts:
+        if str(post.get("id") or "") != str(post_id):
+            continue
+        comments = post.get("comments")
+        if not isinstance(comments, list):
+            comments = []
+        comments.append({
+            "id": secrets.token_hex(12),
+            "content": content[:500],
+            "createdById": user.get("id", ""),
+            "createdByName": user.get("name", ""),
+            "createdAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
+        post["comments"] = comments
+        post["updatedAt"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        changed = True
+        break
+    if not changed:
+        raise ValueError("자료를 찾을 수 없습니다.")
+    save_project_library_posts(conn, posts)
+
+
+def update_project_library_comment(conn, post_id, comment_id, payload):
+    content = str(payload.get("content") or "").strip()
+    if not content:
+        raise ValueError("댓글 내용을 입력해 주세요.")
+    posts = project_library_posts(conn)
+    changed = False
+    for post in posts:
+        if str(post.get("id") or "") != str(post_id):
+            continue
+        comments = post.get("comments") if isinstance(post.get("comments"), list) else []
+        for comment in comments:
+            if str(comment.get("id") or "") != str(comment_id):
+                continue
+            comment["content"] = content[:500]
+            changed = True
+            break
+        if changed:
+            post["comments"] = comments
+            post["updatedAt"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            break
+    if not changed:
+        raise ValueError("댓글을 찾을 수 없습니다.")
+    save_project_library_posts(conn, posts)
+
+
+def delete_project_library_comment(conn, post_id, comment_id):
+    posts = project_library_posts(conn)
+    changed = False
+    for post in posts:
+        if str(post.get("id") or "") != str(post_id):
+            continue
+        comments = post.get("comments") if isinstance(post.get("comments"), list) else []
+        next_comments = [comment for comment in comments if str(comment.get("id") or "") != str(comment_id)]
+        if len(next_comments) == len(comments):
+            break
+        post["comments"] = next_comments
+        post["updatedAt"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        changed = True
+        break
+    if not changed:
+        raise ValueError("댓글을 찾을 수 없습니다.")
+    save_project_library_posts(conn, posts)
+
+
 def dataset_snapshot(conn, mode, user=None):
     normalized_mode = normalize_mode(mode)
     if normalized_mode == "public" or not user:
@@ -2229,6 +2561,7 @@ def dataset_snapshot(conn, mode, user=None):
             "assignmentProjects": [],
             "adminProjects": [],
             "users": [],
+            "projectLibraryPosts": [],
             "loginUser": "",
             "currentUser": None,
         }
@@ -2240,6 +2573,7 @@ def dataset_snapshot(conn, mode, user=None):
         "assignmentProjects": filter_assignment_projects_for_user(projects, user),
         "adminProjects": records_as_json(conn, "admin_project_records", normalized_mode) if is_admin(user) else [],
         "users": users_for_snapshot(conn, user),
+        "projectLibraryPosts": project_library_posts(conn),
         "loginUser": user.get("id", ""),
         "currentUser": user_payload(user),
     }
@@ -2306,6 +2640,7 @@ VIEW_PAGE_FILES = (
     "issues.html",
     "project_completion_approval.html",
     "project_assignment.html",
+    "project_library.html",
     "departments.html",
     "members.html",
     "leave_management.html",
@@ -2440,6 +2775,11 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     page = query.get("page", ["1"])[0]
                     page_size = query.get("pageSize", ["10"])[0]
                     return self.write_json(project_logs(conn, page, page_size))
+                if parsed.path == "/api/project-library":
+                    user = current_user(self)
+                    if not user:
+                        return self.write_error_json("Login required.", HTTPStatus.UNAUTHORIZED)
+                    return self.write_json({"posts": project_library_posts(conn)})
             return self.write_error_json("Unknown API endpoint.", HTTPStatus.NOT_FOUND)
         except PermissionError as error:
             return self.write_error_json(str(error), HTTPStatus.FORBIDDEN)
@@ -2559,6 +2899,24 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     update_department(conn, department_id, payload.get("name"), payload.get("color"))
                     conn.commit()
                     return self.write_json({"ok": True, "departments": get_departments(conn), "users": get_users(conn)})
+                if parsed.path.startswith("/api/project-library/") and "/comments/" in parsed.path:
+                    user = current_user(self)
+                    if not is_admin(user):
+                        return self.write_error_json("Admin login required.", HTTPStatus.UNAUTHORIZED)
+                    rest = parsed.path.split("/api/project-library/", 1)[1]
+                    post_id, comment_id = rest.split("/comments/", 1)
+                    update_project_library_comment(conn, unquote(post_id), unquote(comment_id), payload)
+                    conn.commit()
+                    return self.write_json({"ok": True, "posts": project_library_posts(conn)})
+                if parsed.path.startswith("/api/project-library/"):
+                    user = current_user(self)
+                    if not is_admin(user):
+                        return self.write_error_json("Admin login required.", HTTPStatus.UNAUTHORIZED)
+                    mode = normalize_mode(payload.get("mode"))
+                    post_id = unquote(parsed.path.split("/api/project-library/", 1)[1])
+                    update_project_library_post(conn, mode, post_id, payload)
+                    conn.commit()
+                    return self.write_json({"ok": True, "posts": project_library_posts(conn)})
             return self.write_error_json("Unknown API endpoint.", HTTPStatus.NOT_FOUND)
         except PermissionError as error:
             return self.write_error_json(str(error), HTTPStatus.FORBIDDEN)
@@ -2634,6 +2992,24 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     log_project_actions(conn, user, [project_log_entry("수정", log_action, changed_project, target="프로젝트 완료", summary=changed_stage.get("label", log_action))])
                     conn.commit()
                     return self.write_json(dataset_snapshot(conn, mode, user))
+                if parsed.path == "/api/project-library":
+                    mode = normalize_mode(payload.get("mode"))
+                    if mode == "public":
+                        return self.write_json({"ok": True, "sampleOnly": True, "posts": []})
+                    user = current_user(self)
+                    if not user:
+                        return self.write_error_json("Login required.", HTTPStatus.UNAUTHORIZED)
+                    create_project_library_post(conn, mode, user, payload)
+                    conn.commit()
+                    return self.write_json({"ok": True, "posts": project_library_posts(conn)})
+                if parsed.path.startswith("/api/project-library/") and parsed.path.endswith("/comments"):
+                    user = current_user(self)
+                    if not user:
+                        return self.write_error_json("Login required.", HTTPStatus.UNAUTHORIZED)
+                    post_id = unquote(parsed.path.split("/api/project-library/", 1)[1].rsplit("/comments", 1)[0])
+                    add_project_library_comment(conn, post_id, user, payload)
+                    conn.commit()
+                    return self.write_json({"ok": True, "posts": project_library_posts(conn)})
                 if parsed.path == "/api/project-logs":
                     user = current_user(self)
                     if not user:
@@ -2686,6 +3062,23 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     delete_department(conn, department_id)
                     conn.commit()
                     return self.write_json({"ok": True, "departments": get_departments(conn)})
+                if parsed.path.startswith("/api/project-library/") and "/comments/" in parsed.path:
+                    user = current_user(self)
+                    if not is_admin(user):
+                        return self.write_error_json("Admin login required.", HTTPStatus.UNAUTHORIZED)
+                    rest = parsed.path.split("/api/project-library/", 1)[1]
+                    post_id, comment_id = rest.split("/comments/", 1)
+                    delete_project_library_comment(conn, unquote(post_id), unquote(comment_id))
+                    conn.commit()
+                    return self.write_json({"ok": True, "posts": project_library_posts(conn)})
+                if parsed.path.startswith("/api/project-library/"):
+                    user = current_user(self)
+                    if not is_admin(user):
+                        return self.write_error_json("Admin login required.", HTTPStatus.UNAUTHORIZED)
+                    post_id = unquote(parsed.path.split("/api/project-library/", 1)[1])
+                    delete_project_library_post(conn, post_id)
+                    conn.commit()
+                    return self.write_json({"ok": True, "posts": project_library_posts(conn)})
             return self.write_error_json("Unknown API endpoint.", HTTPStatus.NOT_FOUND)
         except PermissionError as error:
             return self.write_error_json(str(error), HTTPStatus.FORBIDDEN)

@@ -242,6 +242,7 @@ class SQLiteProjectRepository {
     this.scheduleProjects = this.clone(snapshot.scheduleProjects || snapshot.projects || []);
     this.assignmentProjects = this.clone(snapshot.assignmentProjects || snapshot.projects || []);
     this.adminProjects = this.clone(snapshot.adminProjects || []);
+    this.projectLibraryPostsCache = this.clone(snapshot.projectLibraryPosts || []);
     this.usersCache = this.clone(snapshot.users || []);
     this.loginUser = typeof snapshot.loginUser === "string" ? snapshot.loginUser : "";
     this.currentUser = snapshot.currentUser || null;
@@ -257,6 +258,7 @@ class SQLiteProjectRepository {
       scheduleProjects: this.clone(this.scheduleProjects || this.projects),
       assignmentProjects: this.clone(this.assignmentProjects || this.projects),
       adminProjects: this.clone(this.adminProjects),
+      projectLibraryPosts: this.clone(this.projectLibraryPostsCache || []),
       loginUser: this.loginUser,
       currentUser: this.currentUser,
     };
@@ -530,6 +532,66 @@ class SQLiteProjectRepository {
     return { logs: this.getProjectLogs(), meta: this.getProjectLogsMeta() };
   }
 
+  getProjectLibraryPosts() {
+    return this.clone(this.projectLibraryPostsCache || []);
+  }
+
+  async refreshProjectLibraryPosts() {
+    const result = await this.api("/project-library");
+    this.projectLibraryPostsCache = this.clone(result.posts || []);
+    return this.getProjectLibraryPosts();
+  }
+
+  async createProjectLibraryPost(payload) {
+    const result = await this.api("/project-library", {
+      method: "POST",
+      body: JSON.stringify({ mode: this.mode, ...payload }),
+    });
+    this.projectLibraryPostsCache = this.clone(result.posts || []);
+    return result;
+  }
+
+  async updateProjectLibraryPost(id, payload) {
+    const result = await this.api(`/project-library/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ mode: this.mode, ...payload }),
+    });
+    this.projectLibraryPostsCache = this.clone(result.posts || []);
+    return result;
+  }
+
+  async deleteProjectLibraryPost(id) {
+    const result = await this.api(`/project-library/${encodeURIComponent(id)}`, { method: "DELETE" });
+    this.projectLibraryPostsCache = this.clone(result.posts || []);
+    return result;
+  }
+
+  async addProjectLibraryComment(id, content) {
+    const result = await this.api(`/project-library/${encodeURIComponent(id)}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+    this.projectLibraryPostsCache = this.clone(result.posts || []);
+    return result;
+  }
+
+  async updateProjectLibraryComment(postId, commentId, content) {
+    const result = await this.api(`/project-library/${encodeURIComponent(postId)}/comments/${encodeURIComponent(commentId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    });
+    this.projectLibraryPostsCache = this.clone(result.posts || []);
+    return result;
+  }
+
+  async deleteProjectLibraryComment(postId, commentId) {
+    const result = await this.api(`/project-library/${encodeURIComponent(postId)}/comments/${encodeURIComponent(commentId)}`, {
+      method: "DELETE",
+    });
+    this.projectLibraryPostsCache = this.clone(result.posts || []);
+    return result;
+  }
+
   async appendProjectLogs(logs = []) {
     if (!Array.isArray(logs) || !logs.length) return { ok: true, count: 0 };
     const result = await this.api("/project-logs", {
@@ -648,7 +710,7 @@ let progressStatusFilter = "";
 let milestoneFilter = "";
 let selectedMilestoneFilters = [];
 let selectedStatusFilters = [];
-let selectedProjectOptionFilters = ["excludeClosed"];
+let selectedProjectOptionFilters = ["excludeClosed", "workSchedule"];
 let editingStatusProjectId = "";
 let isCreatingProject = false;
 let draftProject = null;
@@ -656,6 +718,9 @@ let editingIssueId = "";
 let editingContactId = "";
 let editingCommunicationId = "";
 let editingProjectWorkStackId = "";
+let editingProjectLibraryPostId = "";
+let selectedProjectLibraryPostId = "";
+let projectLibraryAttachments = [];
 let scheduleCursor = currentKstYearMonth();
 let scheduleWeekAnchor = todayDate();
 let scheduleDialogEditId = "";
@@ -1678,6 +1743,7 @@ function canAccessView(view) {
   if (view === "leaveApprovals") return isAdmin();
   if (view === "projectCompletionApproval") return canViewProjectCompletionApproval();
   if (view === "projectAssignment") return isAdmin() || isTeamLead();
+  if (view === "projectLibrary" || view === "projectLibraryForm" || view === "projectLibraryDetail") return Boolean(currentUser);
   if (view === "monthly" || view === "issues") return canViewMonthlyAndIssues();
   if (view === "leaveManagement") return Boolean(currentUser);
   return true;
@@ -1780,6 +1846,7 @@ function updateNavAccess() {
   }
   if (!canViewProjectCompletionApproval() && currentView === "projectCompletionApproval") switchView("dashboard");
   if (!isAdmin() && !isTeamLead() && currentView === "projectAssignment") switchView("dashboard");
+  if (!currentUser && (currentView === "projectLibrary" || currentView === "projectLibraryForm" || currentView === "projectLibraryDetail")) switchView("dashboard");
   if (!canViewMonthlyAndIssues() && (currentView === "monthly" || currentView === "issues")) switchView("dashboard");
   if (!currentUser && currentView === "leaveManagement") switchView("dashboard");
 }
@@ -2063,24 +2130,25 @@ function projectCompletionEntryAt(project, stageKey) {
 
 function projectPartDurationBadge(project, part) {
   const config = {
-    pm: { startStage: "program_lead", endStage: "program_pm" },
+    pm: { startStage: "program_lead", endDateField: "openDate" },
     designer: { assignedAt: "designerAssignedAt", endStage: "design_lead", fallbackStartStage: "design_worker" },
     publisher: { assignedAt: "publisherAssignedAt", endStage: "publishing_lead", fallbackStartStage: "design_pm", secondaryFallbackStartStage: "publishing_worker" },
     programmer: { assignedAt: "programmerAssignedAt", endStage: "program_lead", fallbackStartStage: "publishing_pm", secondaryFallbackStartStage: "program_worker" },
   }[part];
   if (!config) return "";
   const completedEntry = projectCompletionEntryAt(project, config.endStage);
-  if (!completedEntry?.at) return "";
+  const endAt = config.endDateField ? project?.[config.endDateField] : completedEntry?.at;
+  if (!endAt) return "";
   const fallbackStart = config.startStage
     ? projectCompletionEntryAt(project, config.startStage)?.at
     : projectCompletionEntryAt(project, config.fallbackStartStage)?.at || projectCompletionEntryAt(project, config.secondaryFallbackStartStage)?.at || "";
   const assignedAt = config.assignedAt ? project?.[config.assignedAt] : "";
   const startAt = assignedAt || fallbackStart;
-  const days = projectElapsedDays(startAt, completedEntry.at);
+  const days = projectElapsedDays(startAt, endAt);
   if (!days) return "";
   const startLabel = assignedAt ? "배정일" : "시작일";
-  const endLabel = part === "pm" ? "PM 완료일" : "팀장 완료일";
-  const title = `${startLabel} ${formatDate(String(startAt).slice(0, 10))} · ${endLabel} ${formatDate(String(completedEntry.at).slice(0, 10))}`;
+  const endLabel = part === "pm" ? "오픈일자" : "팀장 완료일";
+  const title = `${startLabel} ${formatDate(String(startAt).slice(0, 10))} · ${endLabel} ${formatDate(String(endAt).slice(0, 10))}`;
   return `<span class="staff-duration-badge" title="${escapeAttr(title)}">${days.toLocaleString("ko-KR")}일</span>`;
 }
 
@@ -2220,7 +2288,7 @@ function closeListFilterMenus() {
 function resetProjectListFilters() {
   selectedMilestoneFilters = [];
   selectedStatusFilters = [];
-  selectedProjectOptionFilters = ["excludeClosed"];
+  selectedProjectOptionFilters = ["excludeClosed", "workSchedule"];
   progressStatusFilter = "";
   milestoneFilter = "";
   setValue("searchInput", "");
@@ -4192,6 +4260,23 @@ function addCommunication() {
 }
 
 const MAX_UPLOAD_PDF_BYTES = 10 * 1024 * 1024;
+const MAX_LIBRARY_FILE_BYTES = 5 * 1024 * 1024;
+const LIBRARY_ALLOWED_FILE_TYPES = {
+  ".pdf": "application/pdf",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".txt": "text/plain",
+  ".csv": "text/csv",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".ppt": "application/vnd.ms-powerpoint",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+};
 const PDF_DANGEROUS_TEXT_PATTERNS = ["/JavaScript", "/JS", "/OpenAction", "/AA", "/Launch", "/EmbeddedFile", "/RichMedia", "/XFA"];
 
 async function inspectPdfUpload(file) {
@@ -6997,6 +7082,402 @@ function renderProjectAssignmentRows() {
   });
 }
 
+function projectLibraryPosts() {
+  return projectRepository.getProjectLibraryPosts?.() || [];
+}
+
+function projectLibraryPostById(id) {
+  return projectLibraryPosts().find((post) => String(post.id || "") === String(id || ""));
+}
+
+function projectLibraryProjectLabel(project) {
+  return project ? `${project.projectNo || "-"} ${project.name || ""}`.trim() : "";
+}
+
+function projectLibrarySelectedProject() {
+  return projects.find((item) => String(item.id || "") === valueOf("projectLibraryProjectId"));
+}
+
+function renderProjectLibraryProjectResults() {
+  const input = $("projectLibraryProjectSearch");
+  const results = $("projectLibraryProjectResults");
+  if (!input || !results) return;
+  const query = input.value.trim().toLowerCase();
+  if (!query) {
+    results.hidden = true;
+    results.innerHTML = "";
+    return;
+  }
+  const rows = [...projects]
+    .filter(hasProjectNo)
+    .filter((project) => [project.projectNo, project.name].join(" ").toLowerCase().includes(query))
+    .sort(compareProjectNo)
+    .slice(0, 12);
+  results.innerHTML = rows.length
+    ? rows.map((project) => `
+      <button class="schedule-project-result" type="button" data-project-library-project-id="${escapeAttr(project.id)}">
+        <strong>${escapeHtml(project.projectNo || "-")}</strong>
+        <span>${escapeHtml(project.name || "")}</span>
+      </button>
+    `).join("")
+    : '<p class="schedule-project-empty">검색 결과가 없습니다.</p>';
+  results.hidden = false;
+}
+
+function filteredProjectLibraryPosts() {
+  const query = valueOf("projectLibrarySearchInput").trim().toLowerCase();
+  return projectLibraryPosts().filter((post) => {
+    if (!query) return true;
+    return [post.projectNo, post.projectName].join(" ").toLowerCase().includes(query);
+  });
+}
+
+function renderProjectLibraryRows() {
+  const tbody = $("projectLibraryRows");
+  if (!tbody) return;
+  const rows = filteredProjectLibraryPosts();
+  setText("projectLibraryTitle", `프로젝트 자료실(${rows.length.toLocaleString("ko-KR")}건)`);
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">등록된 자료가 없습니다.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows
+    .map((post) => {
+      const commentCount = Array.isArray(post.comments) ? post.comments.length : 0;
+      const content = String(post.content || "").trim();
+      const title = String(post.title || content || "").trim();
+      const attachmentCount = Array.isArray(post.attachments) ? post.attachments.length : 0;
+      const commentLabel = commentCount ? ` (${commentCount.toLocaleString("ko-KR")})` : "";
+      return `
+        <tr data-project-library-row="${escapeAttr(post.id)}" tabindex="0">
+          <td>${escapeHtml(post.projectNo || "-")}</td>
+          <td>${escapeHtml(post.projectName || "-")}</td>
+          <td class="library-content-cell">${post.important ? '<span class="library-important-badge">중요</span>' : ""}<span>${escapeHtml(title || "제목 없음")}${escapeHtml(commentLabel)}</span></td>
+          <td>${attachmentCount ? `${attachmentCount.toLocaleString("ko-KR")}개` : post.url ? `<a class="library-link" href="${escapeAttr(post.url)}" target="_blank" rel="noopener noreferrer">열기</a>` : "-"}</td>
+          <td>${escapeHtml(post.createdByName || "-")}</td>
+          <td>${escapeHtml(formatDateTime(post.createdAt || ""))}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function openProjectLibraryForm(postId = "") {
+  if (!currentUser) {
+    alert("로그인 후 등록할 수 있습니다.");
+    return;
+  }
+  const post = postId ? projectLibraryPostById(postId) : null;
+  if (postId && !post) return;
+  if (postId && !isAdmin()) {
+    alert("관리자만 수정할 수 있습니다.");
+    return;
+  }
+  editingProjectLibraryPostId = post?.id || "";
+  projectLibraryAttachments = Array.isArray(post?.attachments) ? projectRepository.clone(post.attachments) : [];
+  setText("projectLibraryFormTitle", post ? "자료 수정" : "자료 등록");
+  setText("projectLibraryFormMessage", "");
+  setText("projectLibrarySubmitBtn", post ? "수정" : "등록");
+  setValue("projectLibraryProjectId", post?.projectId || "");
+  setValue("projectLibraryProjectSearch", post ? projectLibraryProjectLabel({ projectNo: post.projectNo, name: post.projectName }) : "");
+  if ($("projectLibraryImportantInput")) $("projectLibraryImportantInput").checked = Boolean(post?.important);
+  setValue("projectLibraryTitleInput", post?.title || "");
+  setValue("projectLibraryUrlInput", post?.url || "");
+  setValue("projectLibraryContentInput", post?.content || "");
+  renderProjectLibraryAttachments();
+  $("projectLibraryDeleteBtn")?.classList.toggle("hidden", !post || !isAdmin());
+  $("projectLibraryProjectResults") && ($("projectLibraryProjectResults").hidden = true);
+  switchView("projectLibraryForm");
+}
+
+function closeProjectLibraryFormDialog() {
+  editingProjectLibraryPostId = "";
+  projectLibraryAttachments = [];
+  switchView("projectLibrary");
+}
+
+function renderProjectLibraryAttachments() {
+  const list = $("projectLibraryAttachmentList");
+  const addBtn = $("projectLibraryAttachmentAddBtn");
+  if (!list) return;
+  if (!projectLibraryAttachments.length) {
+    list.innerHTML = '<p class="empty-text">첨부된 파일이 없습니다.</p>';
+  } else {
+    list.innerHTML = projectLibraryAttachments.map((file) => `
+      <div class="project-library-attachment-item">
+        <span>${escapeHtml(file.name || "첨부파일")}</span>
+        <small>${escapeHtml(formatFileSize(file.size || 0))}</small>
+        <button class="icon-btn" type="button" data-project-library-remove-file="${escapeAttr(file.id)}" aria-label="첨부파일 삭제">&times;</button>
+      </div>
+    `).join("");
+  }
+  if (addBtn) addBtn.disabled = projectLibraryAttachments.length >= 3;
+}
+
+function formatFileSize(size) {
+  const value = Number(size) || 0;
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)}MB`;
+  if (value >= 1024) return `${Math.ceil(value / 1024).toLocaleString("ko-KR")}KB`;
+  return `${value.toLocaleString("ko-KR")}B`;
+}
+
+function dataUrlToBlob(dataUrl) {
+  const match = String(dataUrl || "").match(/^data:([^;,]+);base64,(.*)$/);
+  if (!match) return null;
+  try {
+    const binary = atob(match[2]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: "application/octet-stream" });
+  } catch (error) {
+    return null;
+  }
+}
+
+function downloadProjectLibraryAttachment(fileId) {
+  const post = projectLibraryPostById(selectedProjectLibraryPostId);
+  const file = (post?.attachments || []).find((item) => String(item.id || "") === String(fileId || ""));
+  if (!file) return;
+  const extension = String(file.name || "").includes(".") ? String(file.name || "").slice(String(file.name || "").lastIndexOf(".")).toLowerCase() : "";
+  if (!LIBRARY_ALLOWED_FILE_TYPES[extension] || !String(file.dataUrl || "").startsWith(`data:${String(file.type || "").toLowerCase()};base64,`)) {
+    alert("보안상 다운로드할 수 없는 첨부파일입니다.");
+    return;
+  }
+  const blob = dataUrlToBlob(file.dataUrl);
+  if (!blob) {
+    alert("첨부파일을 다운로드하지 못했습니다.");
+    return;
+  }
+  triggerDownload(blob, file.name || "첨부파일");
+}
+
+function readProjectLibraryFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const extension = file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase() : "";
+      const mimeType = LIBRARY_ALLOWED_FILE_TYPES[extension] || file.type || "application/octet-stream";
+      const dataUrl = String(reader.result || "").replace(/^data:[^;]*;base64,/, `data:${mimeType};base64,`);
+      resolve({
+        id: crypto.randomUUID(),
+        name: file.name.replace(/[\\/\x00-\x1f\x7f]/g, "_").slice(0, 160),
+        type: mimeType,
+        size: file.size,
+        dataUrl,
+      });
+    };
+    reader.onerror = () => reject(new Error("파일을 읽지 못했습니다."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function addProjectLibraryAttachment(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  if (projectLibraryAttachments.length >= 3) {
+    alert("첨부파일은 최대 3개까지 등록할 수 있습니다.");
+    return;
+  }
+  const extension = file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase() : "";
+  if (!LIBRARY_ALLOWED_FILE_TYPES[extension]) {
+    alert("PDF, 이미지, 문서, 엑셀, PPT, 텍스트 파일만 첨부할 수 있습니다.");
+    return;
+  }
+  if (file.size > MAX_LIBRARY_FILE_BYTES) {
+    alert("첨부파일은 1개당 최대 5MB까지 등록할 수 있습니다.");
+    return;
+  }
+  if (file.size <= 0) {
+    alert("빈 파일은 첨부할 수 없습니다.");
+    return;
+  }
+  if (extension === ".pdf") {
+    const inspection = await inspectPdfUpload(file);
+    if (!inspection.ok) {
+      alert(inspection.message);
+      return;
+    }
+  }
+  try {
+    projectLibraryAttachments.push(await readProjectLibraryFile(file));
+    renderProjectLibraryAttachments();
+  } catch (error) {
+    alert(error?.message || "파일을 추가하지 못했습니다.");
+  }
+}
+
+function openProjectLibraryDetail(postId) {
+  const post = projectLibraryPostById(postId);
+  if (!post) return;
+  selectedProjectLibraryPostId = post.id;
+  const important = post.important ? '<span class="library-important-badge">중요</span>' : "";
+  if ($("projectLibraryDetailProjectName")) {
+    $("projectLibraryDetailProjectName").innerHTML = `${important}<span>${escapeHtml(post.title || "제목 없음")}</span>`;
+  }
+  if ($("projectLibraryDetailMeta")) {
+    $("projectLibraryDetailMeta").innerHTML = `
+      <span>${escapeHtml(`${post.projectNo || "-"} ${post.projectName || ""}`.trim())}</span>
+      <span>${escapeHtml(post.createdByName || "-")} · ${escapeHtml(formatDateTime(post.createdAt || ""))}</span>
+    `;
+  }
+  const attachments = Array.isArray(post.attachments) ? post.attachments : [];
+  const attachmentHtml = attachments.length
+    ? `<div class="project-library-detail-attachments">
+        ${attachments.map((file) => `
+          <button class="library-file-link" type="button" data-project-library-download-file="${escapeAttr(file.id)}">
+            ${escapeHtml(file.name || "첨부파일")}
+            <span>${escapeHtml(formatFileSize(file.size || 0))}</span>
+          </button>
+        `).join("")}
+      </div>`
+    : "";
+  if ($("projectLibraryDetailContent")) {
+    $("projectLibraryDetailContent").innerHTML = `
+      <p>${escapeHtml(post.content || "내용 없음")}</p>
+    `;
+  }
+  if ($("projectLibraryDetailLink")) {
+    const urlHtml = post.url
+      ? `<a class="library-link" href="${escapeAttr(post.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(post.url)}</a>`
+      : "";
+    $("projectLibraryDetailLink").innerHTML = attachmentHtml || urlHtml ? `${attachmentHtml}${urlHtml}` : '<p class="empty-text">등록된 첨부파일 또는 URL이 없습니다.</p>';
+  }
+  $("projectLibraryEditBtn")?.classList.toggle("hidden", !isAdmin());
+  renderProjectLibraryComments(post);
+  setText("projectLibraryDetailMessage", "");
+  setValue("projectLibraryCommentInput", "");
+  switchView("projectLibraryDetail");
+}
+
+function closeProjectLibraryDetailDialog() {
+  selectedProjectLibraryPostId = "";
+  switchView("projectLibrary");
+}
+
+function renderProjectLibraryComments(post) {
+  const list = $("projectLibraryCommentList");
+  if (!list) return;
+  const comments = Array.isArray(post?.comments) ? post.comments : [];
+  if (!comments.length) {
+    list.innerHTML = '<p class="empty-text">등록된 댓글이 없습니다.</p>';
+    return;
+  }
+  list.innerHTML = comments
+    .map((comment) => `
+      <article class="project-library-comment">
+        <div class="project-library-comment-head">
+          <div>
+            <strong>${escapeHtml(comment.createdByName || "-")}</strong>
+            <span>${escapeHtml(formatDateTime(comment.createdAt || ""))}</span>
+          </div>
+          ${isAdmin() ? `
+            <div class="project-library-comment-actions">
+              <button class="ghost-btn table-action" type="button" data-project-library-edit-comment="${escapeAttr(comment.id)}">수정</button>
+              <button class="ghost-btn danger table-action" type="button" data-project-library-delete-comment="${escapeAttr(comment.id)}">삭제</button>
+            </div>
+          ` : ""}
+        </div>
+        <p>${escapeHtml(comment.content || "")}</p>
+      </article>
+    `)
+    .join("");
+}
+
+async function refreshProjectLibraryPosts() {
+  if (!currentUser) return;
+  await projectRepository.refreshProjectLibraryPosts();
+  renderProjectLibraryRows();
+}
+
+async function submitProjectLibraryForm(event) {
+  event.preventDefault();
+  const project = projectLibrarySelectedProject();
+  const payload = {
+    projectId: project?.id || "",
+    important: Boolean($("projectLibraryImportantInput")?.checked),
+    title: valueOf("projectLibraryTitleInput").trim(),
+    url: valueOf("projectLibraryUrlInput").trim(),
+    content: valueOf("projectLibraryContentInput").trim(),
+    attachments: projectLibraryAttachments,
+  };
+  if (!payload.projectId || !payload.title || !payload.content) {
+    setText("projectLibraryFormMessage", "프로젝트, 제목, 내용을 입력해 주세요.");
+    return;
+  }
+  try {
+    if (editingProjectLibraryPostId) await projectRepository.updateProjectLibraryPost(editingProjectLibraryPostId, payload);
+    else await projectRepository.createProjectLibraryPost(payload);
+    editingProjectLibraryPostId = "";
+    projectLibraryAttachments = [];
+    switchView("projectLibrary");
+    renderProjectLibraryRows();
+  } catch (error) {
+    setText("projectLibraryFormMessage", error?.message || "자료를 저장하지 못했습니다.");
+  }
+}
+
+async function deleteProjectLibraryPost() {
+  if (!editingProjectLibraryPostId || !isAdmin()) return;
+  if (!confirm("자료를 삭제하시겠습니까?")) return;
+  try {
+    await projectRepository.deleteProjectLibraryPost(editingProjectLibraryPostId);
+    closeProjectLibraryFormDialog();
+    renderProjectLibraryRows();
+  } catch (error) {
+    setText("projectLibraryFormMessage", error?.message || "자료를 삭제하지 못했습니다.");
+  }
+}
+
+async function submitProjectLibraryComment(event) {
+  event.preventDefault();
+  const content = valueOf("projectLibraryCommentInput").trim();
+  if (!selectedProjectLibraryPostId || !content) {
+    setText("projectLibraryDetailMessage", "댓글 내용을 입력해 주세요.");
+    return;
+  }
+  try {
+    await projectRepository.addProjectLibraryComment(selectedProjectLibraryPostId, content);
+    const post = projectLibraryPostById(selectedProjectLibraryPostId);
+    renderProjectLibraryRows();
+    renderProjectLibraryComments(post);
+    setValue("projectLibraryCommentInput", "");
+    setText("projectLibraryDetailMessage", "");
+  } catch (error) {
+    setText("projectLibraryDetailMessage", error?.message || "댓글을 저장하지 못했습니다.");
+  }
+}
+
+async function editProjectLibraryComment(commentId) {
+  if (!isAdmin() || !selectedProjectLibraryPostId) return;
+  const post = projectLibraryPostById(selectedProjectLibraryPostId);
+  const comment = (post?.comments || []).find((item) => String(item.id || "") === String(commentId || ""));
+  if (!comment) return;
+  const content = prompt("댓글 내용을 수정하세요.", comment.content || "")?.trim();
+  if (!content) return;
+  try {
+    await projectRepository.updateProjectLibraryComment(selectedProjectLibraryPostId, commentId, content);
+    const nextPost = projectLibraryPostById(selectedProjectLibraryPostId);
+    renderProjectLibraryRows();
+    renderProjectLibraryComments(nextPost);
+  } catch (error) {
+    setText("projectLibraryDetailMessage", error?.message || "댓글을 수정하지 못했습니다.");
+  }
+}
+
+async function deleteProjectLibraryComment(commentId) {
+  if (!isAdmin() || !selectedProjectLibraryPostId) return;
+  if (!confirm("댓글을 삭제하시겠습니까?")) return;
+  try {
+    await projectRepository.deleteProjectLibraryComment(selectedProjectLibraryPostId, commentId);
+    const nextPost = projectLibraryPostById(selectedProjectLibraryPostId);
+    renderProjectLibraryRows();
+    renderProjectLibraryComments(nextPost);
+  } catch (error) {
+    setText("projectLibraryDetailMessage", error?.message || "댓글을 삭제하지 못했습니다.");
+  }
+}
+
 
 function renderAll(includeFilters = true) {
   if (includeFilters) renderFilters();
@@ -7006,6 +7487,7 @@ function renderAll(includeFilters = true) {
   renderIssueProjectRows();
   renderProjectAssignmentRows();
   renderProjectCompletionRows();
+  renderProjectLibraryRows();
   updateProjectCompletionNavCount();
   updateProjectAssignmentNavCount();
   renderBasicManagement();
@@ -7021,7 +7503,7 @@ function renderAll(includeFilters = true) {
 
 document.querySelectorAll("[data-view]").forEach((button) => {
   button.addEventListener("click", () => {
-    if (!currentUser && (button.dataset.authMenu === "attendance" || button.dataset.authMenu === "basic")) {
+    if (!currentUser && (button.dataset.authMenu === "attendance" || button.dataset.authMenu === "basic" || button.dataset.authMenu === "project")) {
       alert("로그인 후 확인 가능합니다.");
       return;
     }
@@ -7039,6 +7521,7 @@ document.querySelectorAll("[data-view]").forEach((button) => {
       projectLogPage = 1;
       refreshProjectLogs(1);
     }
+    if (button.dataset.view === "projectLibrary") refreshProjectLibraryPosts();
     if (button.dataset.view === "leaveManagement") refreshLeaves();
     if (button.dataset.view === "leaveApprovals") refreshLeaveApprovals();
     if (button.dataset.view === "vacationSchedule") refreshVacationSchedule();
@@ -7064,6 +7547,11 @@ document.addEventListener("input", (event) => {
   if (event.target.closest(".detail-main-grid")) updateDetailFilledState();
   if (event.target.id === "searchInput") renderRows();
   if (event.target.id === "projectAssignmentSearchInput") renderProjectAssignmentRows();
+  if (event.target.id === "projectLibrarySearchInput") renderProjectLibraryRows();
+  if (event.target.id === "projectLibraryProjectSearch") {
+    setValue("projectLibraryProjectId", "");
+    renderProjectLibraryProjectResults();
+  }
   if (event.target.id === "memberSearchInput") renderBasicManagement();
   if (event.target.id === "leaveApprovalSearchInput") renderLeaveApprovals();
   if (event.target.id === "detailSearchInput") {
@@ -7145,8 +7633,59 @@ on("companyHolidayAddBtnList", "click", () => openCompanyHolidayDialog());
 on("closeCompanyHolidayDialog", "click", closeCompanyHolidayDialog);
 on("companyHolidayForm", "submit", saveCompanyHoliday);
 on("companyHolidayDeleteBtn", "click", deleteCompanyHoliday);
+on("projectLibraryAddBtn", "click", () => openProjectLibraryForm());
+on("projectLibraryCancelBtn", "click", closeProjectLibraryFormDialog);
+on("projectLibraryForm", "submit", submitProjectLibraryForm);
+on("projectLibraryDeleteBtn", "click", deleteProjectLibraryPost);
+on("projectLibraryAttachmentAddBtn", "click", () => $("projectLibraryAttachmentInput")?.click());
+on("projectLibraryAttachmentInput", "change", addProjectLibraryAttachment);
+on("projectLibraryDetailBackBtn", "click", closeProjectLibraryDetailDialog);
+on("projectLibraryCommentForm", "submit", submitProjectLibraryComment);
+on("projectLibraryEditBtn", "click", () => {
+  const postId = selectedProjectLibraryPostId;
+  selectedProjectLibraryPostId = "";
+  openProjectLibraryForm(postId);
+});
 
 document.addEventListener("click", (event) => {
+  const editLibraryComment = event.target.closest?.("[data-project-library-edit-comment]");
+  if (editLibraryComment) {
+    void editProjectLibraryComment(editLibraryComment.dataset.projectLibraryEditComment);
+    return;
+  }
+  const deleteLibraryComment = event.target.closest?.("[data-project-library-delete-comment]");
+  if (deleteLibraryComment) {
+    void deleteProjectLibraryComment(deleteLibraryComment.dataset.projectLibraryDeleteComment);
+    return;
+  }
+  const projectLibraryProject = event.target.closest?.("[data-project-library-project-id]");
+  if (projectLibraryProject) {
+    const project = findProjectById(projectLibraryProject.dataset.projectLibraryProjectId);
+    if (project) {
+      setValue("projectLibraryProjectId", project.id);
+      setValue("projectLibraryProjectSearch", projectLibraryProjectLabel(project));
+      const results = $("projectLibraryProjectResults");
+      if (results) results.hidden = true;
+    }
+    return;
+  }
+  const removeLibraryFile = event.target.closest?.("[data-project-library-remove-file]");
+  if (removeLibraryFile) {
+    projectLibraryAttachments = projectLibraryAttachments.filter((file) => String(file.id || "") !== String(removeLibraryFile.dataset.projectLibraryRemoveFile || ""));
+    renderProjectLibraryAttachments();
+    return;
+  }
+  const downloadLibraryFile = event.target.closest?.("[data-project-library-download-file]");
+  if (downloadLibraryFile) {
+    downloadProjectLibraryAttachment(downloadLibraryFile.dataset.projectLibraryDownloadFile);
+    return;
+  }
+  const libraryTarget = event.target.closest?.("[data-project-library-row]");
+  if (libraryTarget) {
+    if (event.target.closest("a, button")) return;
+    openProjectLibraryDetail(libraryTarget.dataset.projectLibraryRow);
+    return;
+  }
   const completionTarget = event.target.closest?.("[data-project-completion-action]");
   if (completionTarget) {
     void advanceProjectCompletion(completionTarget.dataset.projectCompletionId, completionTarget.dataset.projectCompletionAction || "approve");
@@ -7163,6 +7702,13 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
+  const libraryTarget = event.target.closest?.("[data-project-library-row]");
+  if (libraryTarget) {
+    if (event.target.closest("a, button")) return;
+    event.preventDefault();
+    openProjectLibraryDetail(libraryTarget.dataset.projectLibraryRow);
+    return;
+  }
   const completionTarget = event.target.closest?.("[data-project-completion-action]");
   if (completionTarget) {
     void advanceProjectCompletion(completionTarget.dataset.projectCompletionId, completionTarget.dataset.projectCompletionAction || "approve");

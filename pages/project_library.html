@@ -1,0 +1,107 @@
+      <section id="projectLibraryView" class="view">
+        <div class="list-panel management-panel project-library-panel">
+          <div class="panel-head">
+            <div>
+              <h1 id="projectLibraryTitle">프로젝트 자료실(0건)</h1>
+            </div>
+            <button id="projectLibraryAddBtn" class="primary-btn" type="button">자료 등록</button>
+          </div>
+          <div class="filters library-filters">
+            <input id="projectLibrarySearchInput" type="search" placeholder="PJ No 또는 프로젝트명 검색" autocomplete="off" />
+          </div>
+          <div class="table-wrap management-table-wrap">
+            <table class="management-table project-library-table">
+              <thead>
+                <tr>
+                  <th>PJ No</th>
+                  <th>프로젝트명</th>
+                  <th>제목</th>
+                  <th>첨부/링크</th>
+                  <th>등록자</th>
+                  <th>등록일</th>
+                </tr>
+              </thead>
+              <tbody id="projectLibraryRows">
+                <tr>
+                  <td colspan="6" class="empty-cell">등록된 자료가 없습니다.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="projectLibraryFormView" class="view">
+        <form id="projectLibraryForm" class="list-panel management-panel project-library-write-panel">
+          <div class="panel-head">
+            <div>
+              <h1 id="projectLibraryFormTitle">자료 등록</h1>
+            </div>
+            <div class="project-library-form-actions">
+              <button id="projectLibraryCancelBtn" class="ghost-btn" type="button">목록</button>
+              <button id="projectLibraryDeleteBtn" class="ghost-btn danger hidden" type="button">삭제</button>
+              <button id="projectLibrarySubmitBtn" class="primary-btn" type="submit">등록</button>
+            </div>
+          </div>
+          <div class="project-library-write-body">
+            <label>프로젝트
+              <div class="schedule-project-picker">
+                <input id="projectLibraryProjectSearch" type="search" autocomplete="off" placeholder="프로젝트명 또는 PJ No 검색" required />
+                <input id="projectLibraryProjectId" type="hidden" />
+                <div id="projectLibraryProjectResults" class="schedule-project-results" role="listbox" hidden></div>
+              </div>
+            </label>
+            <label class="project-library-title-row">
+              <span class="check-option project-library-important-field">
+                <input id="projectLibraryImportantInput" type="checkbox" />
+                중요
+              </span>
+              <input id="projectLibraryTitleInput" type="text" autocomplete="off" maxlength="120" placeholder="제목" required />
+            </label>
+            <label>내용
+              <textarea id="projectLibraryContentInput" rows="12" maxlength="3000" placeholder="자료 설명 또는 공유 내용을 입력하세요." required></textarea>
+            </label>
+            <div class="project-library-attachment-field">
+              <div class="field-label">첨부파일</div>
+              <div id="projectLibraryAttachmentList" class="project-library-attachment-list"></div>
+              <button id="projectLibraryAttachmentAddBtn" class="ghost-btn" type="button">파일 추가</button>
+              <input id="projectLibraryAttachmentInput" class="hidden" type="file" />
+            </div>
+            <label>자료 URL
+              <input id="projectLibraryUrlInput" type="text" autocomplete="off" maxlength="500" placeholder="example.com 또는 https://example.com" />
+            </label>
+            <p id="projectLibraryFormMessage"></p>
+          </div>
+        </form>
+      </section>
+
+      <section id="projectLibraryDetailView" class="view">
+        <form id="projectLibraryCommentForm" class="list-panel management-panel project-library-detail-panel">
+          <div class="panel-head">
+            <div>
+              <h1 id="projectLibraryDetailProjectName">프로젝트 자료</h1>
+              <p id="projectLibraryDetailMeta"></p>
+            </div>
+          </div>
+          <div class="project-library-write-body">
+            <div id="projectLibraryDetailContent" class="project-library-detail-content"></div>
+            <div id="projectLibraryDetailLink" class="project-library-detail-link"></div>
+            <div class="project-library-comments">
+              <h3>댓글</h3>
+              <div id="projectLibraryCommentList" class="project-library-comment-list"></div>
+              <div class="project-library-comment-write">
+                <label for="projectLibraryCommentInput">댓글 작성</label>
+                <div class="project-library-comment-input-row">
+                  <textarea id="projectLibraryCommentInput" rows="3" maxlength="500" placeholder="댓글 내용을 입력하세요." required></textarea>
+                  <button class="primary-btn" type="submit">댓글 등록</button>
+                </div>
+              </div>
+            </div>
+            <p id="projectLibraryDetailMessage"></p>
+            <div class="project-library-detail-bottom-actions">
+              <button id="projectLibraryDetailBackBtn" class="ghost-btn" type="button">목록</button>
+              <button id="projectLibraryEditBtn" class="ghost-btn hidden" type="button">수정</button>
+            </div>
+          </div>
+        </form>
+      </section>
