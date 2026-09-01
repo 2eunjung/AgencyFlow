@@ -419,6 +419,25 @@ body.detail-open .workspace {
   flex-shrink: 0;
 }
 
+.panel-actions input[type="search"] {
+  width: min(410px, 42vw);
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.form-actions.split-actions {
+  justify-content: space-between;
+}
+
+.form-actions.split-actions .primary-btn {
+  margin-left: auto;
+}
+
 h1,
 h2,
 h3,

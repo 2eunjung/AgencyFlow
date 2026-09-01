@@ -343,6 +343,8 @@ class SQLiteProjectRepository {
       position: String(user?.position || "").trim(),
       hireDate: String(user?.hireDate || "").trim(),
       resignDate: String(user?.resignDate || "").trim(),
+      leaveTotalDays: Number(user?.leaveTotalDays || 0),
+      leaveRemainingDays: Number(user?.leaveRemainingDays || 0),
     };
   }
 
@@ -448,6 +450,25 @@ class SQLiteProjectRepository {
     return result;
   }
 
+  async updateLeaveRequest(id, payload) {
+    const result = await this.api(`/leaves/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    if (result.requests) this.vacationScheduleCache = this.clone(result.requests || []);
+    if (result.users) this.usersCache = this.clone(result.users || []);
+    return result;
+  }
+
+  async deleteLeaveRequest(id) {
+    const result = await this.api(`/leaves/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    if (result.requests) this.vacationScheduleCache = this.clone(result.requests || []);
+    if (result.users) this.usersCache = this.clone(result.users || []);
+    return result;
+  }
+
   async refreshLeaveApprovals() {
     const result = await this.api("/leave-approvals");
     this.leaveApprovalsCache = this.clone(result.requests || []);
@@ -529,10 +550,10 @@ class SQLiteProjectRepository {
     return { ok: true };
   }
 
-  async createUser({ id, password, name, role = "user", approvalStatus = "비활성화", department = "", position = "", hireDate = "", resignDate = "" }) {
+  async createUser({ id, password, name, role = "user", approvalStatus = "비활성화", department = "", position = "", hireDate = "", resignDate = "", leaveTotalDays = "", leaveRemainingDays = "" }) {
     const result = await this.api("/users", {
       method: "POST",
-      body: JSON.stringify({ id, password, name, role, approvalStatus, department, position, hireDate, resignDate }),
+      body: JSON.stringify({ id, password, name, role, approvalStatus, department, position, hireDate, resignDate, leaveTotalDays, leaveRemainingDays }),
     });
     this.usersCache = this.clone(result.users || this.usersCache);
     return result;
@@ -574,6 +595,8 @@ class SQLiteProjectRepository {
       position: normalized.position,
       hireDate: normalized.hireDate,
       resignDate: normalized.resignDate,
+      leaveTotalDays: normalized.leaveTotalDays,
+      leaveRemainingDays: normalized.leaveRemainingDays,
     };
   }
 
@@ -600,6 +623,7 @@ let currentUser = null;
 let vacationCursor = currentKstYearMonth();
 let vacationWeekAnchor = todayDate();
 let editingCompanyHolidayId = "";
+let editingVacationLeaveId = "";
 let selectedLeaveUserId = "";
 let selectedVacationLeaveUserId = "";
 const KOREA_PUBLIC_HOLIDAYS = [
@@ -4504,6 +4528,8 @@ function openMemberDialog(memberId = "") {
   populatePositionSelect(user?.position || "");
   setValue("memberHireDate", user?.hireDate || "");
   setValue("memberResignDate", user?.resignDate || "");
+  setValue("memberLeaveTotalDays", user ? String(user.leaveTotalDays || 0) : "");
+  setValue("memberLeaveRemainingDays", user ? String(user.leaveRemainingDays || 0) : "");
   populateDepartmentSelect("memberDepartment", user?.department || "");
   setValue("memberRole", ["admin", "team_lead", "user"].includes(user?.role) ? user.role : "user");
   setValue("memberApproval", user?.approvalStatus || "비활성화");
@@ -4638,6 +4664,8 @@ async function submitMemberForm(event) {
   const role = valueOf("memberRole");
   const approvalStatus = valueOf("memberApproval");
   const department = valueOf("memberDepartment");
+  const leaveTotalDays = valueOf("memberLeaveTotalDays").trim();
+  const leaveRemainingDays = valueOf("memberLeaveRemainingDays").trim();
   const password = valueOf("memberPassword");
   const passwordConfirm = valueOf("memberPasswordConfirm");
 
@@ -4661,7 +4689,7 @@ async function submitMemberForm(event) {
       }
     }
 
-    const patch = { name, position, hireDate, resignDate, role, approvalStatus, department };
+    const patch = { name, position, hireDate, resignDate, role, approvalStatus, department, leaveTotalDays, leaveRemainingDays };
     if (password) patch.password = password;
     const result = await projectRepository.updateUser(editingMemberId, patch);
     setText("memberMessage", result.ok ? "회원 정보가 저장되었습니다." : result.message);
@@ -4697,6 +4725,8 @@ async function submitMemberForm(event) {
     role,
     approvalStatus,
     department,
+    leaveTotalDays,
+    leaveRemainingDays,
   });
   setText("memberMessage", result.message);
   if (!result.ok) return;
@@ -5095,8 +5125,26 @@ function renderLeaveApprovals() {
 
   const rows = $("leaveApprovalRows");
   if (!rows) return;
+  const query = String(valueOf("leaveApprovalSearchInput") || "").trim().toLowerCase();
+  const visibleRequests = query
+    ? requests.filter((request) =>
+        [
+          request.userName,
+          request.userId,
+          formatLeaveDateRange(request),
+          request.type,
+          formatLeaveDays(request.days),
+          request.reason,
+          request.status,
+          request.approvedBy,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(query)
+      )
+    : requests;
   rows.innerHTML =
-    requests
+    visibleRequests
       .map((request) => {
         const status = request.status || "대기";
         const isPending = status === "대기";
@@ -5268,6 +5316,10 @@ async function submitLeaveForm(event) {
     setText("leaveMessage", "연차 정보를 입력해 주세요.");
     return;
   }
+  if (hasVacationLeaveWeekend(payload.startDate, payload.endDate)) {
+    setText("leaveMessage", "주말을 제외한 평일 날짜로 선택해 주세요.");
+    return;
+  }
   try {
     const result = await projectRepository.createLeaveRequest(payload);
     setText("leaveMessage", result.ok ? "연차가 등록되었습니다. 관리자 승인 후 차감됩니다." : result.message);
@@ -5381,6 +5433,11 @@ function companyHolidayEventAttributes(holiday) {
   return ` role="button" tabindex="0" data-company-holiday-id="${escapeHtml(holiday.id)}"`;
 }
 
+function vacationLeaveEventAttributes(request) {
+  if (!isAdmin() || !request?.id) return "";
+  return ` role="button" tabindex="0" data-vacation-leave-id="${escapeHtml(request.id)}"`;
+}
+
 function vacationCalendarMode() {
   return $("vacationCalendarWeek")?.checked ? "week" : "month";
 }
@@ -5438,7 +5495,7 @@ function renderVacationCalendarGrid() {
       ${dayHolidays.map((holiday) => `<div class="schedule-event is-holiday"${companyHolidayEventAttributes(holiday)}>
         <strong class="schedule-event-name">${escapeHtml(vacationHolidayLabel(holiday))}</strong>
       </div>`).join("")}
-      ${dayRequests.map((request) => `<div class="schedule-event"${departmentEventStyle(request.department)}>
+      ${dayRequests.map((request) => `<div class="schedule-event"${departmentEventStyle(request.department)}${vacationLeaveEventAttributes(request)}>
         <strong class="schedule-event-name">${escapeHtml(vacationEventLabel(request))}</strong>
       </div>`).join("")}
     </div>`);
@@ -5484,7 +5541,7 @@ function renderVacationScheduleRows() {
         .map((request) => {
           const rowAttrs = request.isCompanyHoliday
             ? ` data-company-holiday-id="${escapeHtml(request.id)}"`
-            : ` style="background:${escapeAttr(departmentColor(request.department))}"`;
+            : ` data-vacation-leave-id="${escapeHtml(request.id)}" style="background:${escapeAttr(departmentColor(request.department))}"`;
           return `<tr${rowAttrs}>
         <td>${escapeHtml(formatLeaveDateRange(request))}</td>
         <td>${escapeHtml(request.department || "-")}</td>
@@ -5547,8 +5604,18 @@ function vacationLeaveActiveUsers() {
     .sort((a, b) => String(a.name || a.id || "").localeCompare(String(b.name || b.id || ""), "ko"));
 }
 
+function vacationLeaveUsers() {
+  return projectRepository
+    .getUsers()
+    .sort((a, b) => String(a.name || a.id || "").localeCompare(String(b.name || b.id || ""), "ko"));
+}
+
 function selectedVacationLeaveUser() {
-  return vacationLeaveActiveUsers().find((user) => user.id === selectedVacationLeaveUserId) || null;
+  return vacationLeaveUsers().find((user) => user.id === selectedVacationLeaveUserId) || null;
+}
+
+function findVacationLeaveRequest(id) {
+  return (projectRepository.getVacationSchedule?.() || []).find((request) => String(request.id) === String(id));
 }
 
 function renderVacationLeaveUserResults() {
@@ -5589,22 +5656,27 @@ function renderVacationLeaveUserResults() {
   });
 }
 
-async function openVacationLeaveDialog() {
+async function openVacationLeaveDialog(leaveId = "") {
   if (!isAdmin()) return;
   try {
     if (!projectRepository.getUsers().length) await projectRepository.refreshUsers();
   } catch (error) {
     console.error(error);
   }
+  const request = leaveId ? findVacationLeaveRequest(leaveId) : null;
   const today = todayDate();
-  selectedVacationLeaveUserId = "";
-  setValue("vacationLeaveUserSearch", "");
-  setValue("vacationLeaveUserId", "");
-  setValue("vacationLeaveStartDate", today);
-  setValue("vacationLeaveEndDate", today);
-  setValue("vacationLeaveType", "연차");
-  setValue("vacationLeaveDays", "1");
-  setValue("vacationLeaveMemo", "");
+  editingVacationLeaveId = request ? String(request.id) : "";
+  selectedVacationLeaveUserId = request?.userId || "";
+  setText("vacationLeaveDialogTitle", request ? "연차 수정" : "연차 등록");
+  setText("vacationLeaveSubmitBtn", request ? "저장" : "등록");
+  $("vacationLeaveDeleteBtn")?.classList.toggle("hidden", !request);
+  setValue("vacationLeaveUserSearch", request ? `${request.userName || request.userId || ""} (${request.userId || ""})` : "");
+  setValue("vacationLeaveUserId", request?.userId || "");
+  setValue("vacationLeaveStartDate", request?.startDate || today);
+  setValue("vacationLeaveEndDate", request?.endDate || request?.startDate || today);
+  setValue("vacationLeaveType", request?.type || "연차");
+  setValue("vacationLeaveDays", request ? String(request.days || 1) : "1");
+  setValue("vacationLeaveMemo", request?.reason || "");
   setText("vacationLeaveMessage", "");
   if ($("vacationLeaveUserResults")) {
     $("vacationLeaveUserResults").hidden = true;
@@ -5614,9 +5686,26 @@ async function openVacationLeaveDialog() {
 }
 
 function closeVacationLeaveDialog() {
+  editingVacationLeaveId = "";
   selectedVacationLeaveUserId = "";
+  $("vacationLeaveDeleteBtn")?.classList.add("hidden");
   $("vacationLeaveUserResults") && ($("vacationLeaveUserResults").hidden = true);
   $("vacationLeaveDialog")?.close();
+}
+
+function isWeekdayDate(dateText) {
+  const parts = parseDateParts(dateText);
+  if (!parts) return false;
+  const day = new Date(parts.year, parts.month - 1, parts.day).getDay();
+  return day !== 0 && day !== 6;
+}
+
+function countVacationLeaveWeekdays(startDate, endDate) {
+  return datesBetween(startDate, endDate).filter(isWeekdayDate).length;
+}
+
+function hasVacationLeaveWeekend(startDate, endDate) {
+  return datesBetween(startDate, endDate).some((date) => !isWeekdayDate(date));
 }
 
 function updateVacationLeaveDaysFromDates() {
@@ -5626,14 +5715,15 @@ function updateVacationLeaveDaysFromDates() {
     setValue("vacationLeaveEndDate", valueOf("vacationLeaveStartDate"));
     return;
   }
-  const start = new Date(valueOf("vacationLeaveStartDate"));
-  const end = new Date(valueOf("vacationLeaveEndDate"));
+  const startDate = valueOf("vacationLeaveStartDate");
+  const endDate = valueOf("vacationLeaveEndDate");
+  const start = new Date(startDate);
+  const end = new Date(endDate);
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
     setValue("vacationLeaveDays", "1");
     return;
   }
-  const diff = Math.floor((end - start) / (24 * 60 * 60 * 1000)) + 1;
-  setValue("vacationLeaveDays", String(Math.max(1, diff)));
+  setValue("vacationLeaveDays", String(Math.max(1, countVacationLeaveWeekdays(startDate, endDate))));
 }
 
 async function submitVacationLeaveForm(event) {
@@ -5649,6 +5739,10 @@ async function submitVacationLeaveForm(event) {
     setText("vacationLeaveMessage", "회원, 시작일, 종료일, 구분을 선택해 주세요.");
     return;
   }
+  if (hasVacationLeaveWeekend(startDate, endDate)) {
+    setText("vacationLeaveMessage", "주말을 제외한 평일 날짜로 선택해 주세요.");
+    return;
+  }
   const payload = {
     userId,
     startDate,
@@ -5659,7 +5753,11 @@ async function submitVacationLeaveForm(event) {
     autoApprove: true,
   };
   try {
-    await projectRepository.createLeaveRequest(payload);
+    if (editingVacationLeaveId) {
+      await projectRepository.updateLeaveRequest(editingVacationLeaveId, payload);
+    } else {
+      await projectRepository.createLeaveRequest(payload);
+    }
     closeVacationLeaveDialog();
     await projectRepository.refreshVacationSchedule();
     await projectRepository.refreshUsers();
@@ -5673,6 +5771,23 @@ async function submitVacationLeaveForm(event) {
   }
 }
 
+async function deleteVacationLeave() {
+  if (!isAdmin() || !editingVacationLeaveId) return;
+  if (!confirm("등록한 연차 일정을 삭제할까요?")) return;
+  try {
+    await projectRepository.deleteLeaveRequest(editingVacationLeaveId);
+    closeVacationLeaveDialog();
+    await projectRepository.refreshVacationSchedule();
+    await projectRepository.refreshUsers();
+    if (currentView === "leaveApprovals") await refreshLeaveApprovals();
+    if (currentView === "leaveManagement") await refreshLeaves();
+    renderVacationSchedule();
+    renderBasicManagement();
+  } catch (error) {
+    console.error(error);
+    setText("vacationLeaveMessage", error.message || "연차 삭제 중 오류가 발생했습니다.");
+  }
+}
 function findCompanyHoliday(id) {
   return (projectRepository.getCompanyHolidays?.() || []).find((holiday) => String(holiday.id) === String(id));
 }
@@ -6950,6 +7065,7 @@ document.addEventListener("input", (event) => {
   if (event.target.id === "searchInput") renderRows();
   if (event.target.id === "projectAssignmentSearchInput") renderProjectAssignmentRows();
   if (event.target.id === "memberSearchInput") renderBasicManagement();
+  if (event.target.id === "leaveApprovalSearchInput") renderLeaveApprovals();
   if (event.target.id === "detailSearchInput") {
     const project = selectedProject();
     if (!project) return;
@@ -7018,6 +7134,7 @@ on("vacationLeaveAddBtn", "click", openVacationLeaveDialog);
 on("vacationLeaveAddBtnList", "click", openVacationLeaveDialog);
 on("closeVacationLeaveDialog", "click", closeVacationLeaveDialog);
 on("vacationLeaveForm", "submit", submitVacationLeaveForm);
+on("vacationLeaveDeleteBtn", "click", deleteVacationLeave);
 on("vacationLeaveUserSearch", "input", () => {
   selectedVacationLeaveUserId = "";
   setValue("vacationLeaveUserId", "");
@@ -7035,6 +7152,11 @@ document.addEventListener("click", (event) => {
     void advanceProjectCompletion(completionTarget.dataset.projectCompletionId, completionTarget.dataset.projectCompletionAction || "approve");
     return;
   }
+  const leaveTarget = event.target.closest?.("[data-vacation-leave-id]");
+  if (leaveTarget) {
+    openVacationLeaveDialog(leaveTarget.dataset.vacationLeaveId);
+    return;
+  }
   const holidayTarget = event.target.closest?.("[data-company-holiday-id]");
   if (holidayTarget) openCompanyHolidayDialog(holidayTarget.dataset.companyHolidayId);
 });
@@ -7044,6 +7166,12 @@ document.addEventListener("keydown", (event) => {
   const completionTarget = event.target.closest?.("[data-project-completion-action]");
   if (completionTarget) {
     void advanceProjectCompletion(completionTarget.dataset.projectCompletionId, completionTarget.dataset.projectCompletionAction || "approve");
+    return;
+  }
+  const leaveTarget = event.target.closest?.("[data-vacation-leave-id]");
+  if (leaveTarget) {
+    event.preventDefault();
+    openVacationLeaveDialog(leaveTarget.dataset.vacationLeaveId);
     return;
   }
   const holidayTarget = event.target.closest?.("[data-company-holiday-id]");
@@ -7251,4 +7379,9 @@ initializeApp().catch((error) => {
   console.error(error);
   alert("프로젝트 데이터를 불러오지 못했습니다. 데이터 파일을 확인해 주세요.");
 });
+
+
+
+
+
 

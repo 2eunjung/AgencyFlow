@@ -7,7 +7,7 @@ import json
 import os
 import re
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -564,12 +564,16 @@ def ensure_db():
               user_name_enc TEXT NOT NULL,
               year INTEGER NOT NULL,
               total_days REAL NOT NULL DEFAULT 15,
+              remaining_days REAL,
               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               UNIQUE(user_id_lookup, year)
             )
             """
         )
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(leave_balances)").fetchall()}
+        if "remaining_days" not in columns:
+            conn.execute("ALTER TABLE leave_balances ADD COLUMN remaining_days REAL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_leave_balances_user_year ON leave_balances(user_id_lookup, year)")
         conn.execute(
             """
@@ -848,6 +852,129 @@ def leave_year(value=None):
     return date.today().year
 
 
+def parse_iso_date(value):
+    text = str(value or "").strip()[:10]
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", text):
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def full_months_between(start, end):
+    months = (end.year - start.year) * 12 + (end.month - start.month)
+    if end.day < start.day:
+        months -= 1
+    return max(0, months)
+
+
+def calculate_annual_leave_days(user, year=None):
+    year = int(year or date.today().year)
+    approval = normalize_approval_status(user.get("approvalStatus"), user.get("role", "user"))
+    hire_date = parse_iso_date(user.get("hireDate"))
+    resign_date = parse_iso_date(user.get("resignDate"))
+    if approval != "활성화":
+        return 0.0
+    if resign_date and resign_date < date(year, 1, 1):
+        return 0.0
+    target = date(year, 12, 31)
+    today_value = date.today()
+    if year == today_value.year:
+        target = today_value
+    if resign_date and resign_date < target:
+        target = resign_date
+    if not hire_date or hire_date > target:
+        return 0.0
+    months = full_months_between(hire_date, target)
+    if months < 12:
+        return float(min(11, months))
+    years = target.year - hire_date.year
+    if (target.month, target.day) < (hire_date.month, hire_date.day):
+        years -= 1
+    years = max(1, years)
+    extra = (years - 1) // 2 if years >= 3 else 0
+    return float(min(25, 15 + extra))
+
+
+def parse_leave_days(value):
+    if value is None or value == "":
+        return None
+    try:
+        days = float(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, round(days * 2) / 2)
+
+
+def approved_leave_used_days(conn, user, year=None):
+    year = int(year or date.today().year)
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(days), 0) AS used_days
+        FROM leave_requests
+        WHERE user_id_lookup = ? AND year = ? AND status = 'approved'
+        """,
+        (id_lookup(user.get("id", "")), year),
+    ).fetchone()
+    return float(row["used_days"] or 0)
+
+
+def approved_leave_used_days_by_lookup(conn, lookup, year=None):
+    year = int(year or date.today().year)
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(days), 0) AS used_days
+        FROM leave_requests
+        WHERE user_id_lookup = ? AND year = ? AND status = 'approved'
+        """,
+        (lookup, year),
+    ).fetchone()
+    return float(row["used_days"] or 0)
+
+
+def sync_leave_remaining_days(conn, lookup, year=None):
+    year = int(year or date.today().year)
+    balance = conn.execute(
+        "SELECT total_days FROM leave_balances WHERE user_id_lookup = ? AND year = ?",
+        (lookup, year),
+    ).fetchone()
+    if not balance:
+        return
+    total = float(balance["total_days"] or 0)
+    used = approved_leave_used_days_by_lookup(conn, lookup, year)
+    conn.execute(
+        """
+        UPDATE leave_balances
+        SET remaining_days = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id_lookup = ? AND year = ?
+        """,
+        (max(0, total - used), lookup, year),
+    )
+
+
+def set_leave_balance(conn, user, year=None, total_days=None, remaining_days=None):
+    year = int(year or date.today().year)
+    total = parse_leave_days(total_days)
+    remaining = parse_leave_days(remaining_days)
+    if total is None:
+        total = calculate_annual_leave_days(user, year)
+    lookup = id_lookup(user.get("id", ""))
+    conn.execute(
+        """
+        INSERT INTO leave_balances (user_id_lookup, user_id_enc, user_name_enc, year, total_days, remaining_days)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id_lookup, year) DO UPDATE SET
+          user_id_enc = excluded.user_id_enc,
+          user_name_enc = excluded.user_name_enc,
+          total_days = excluded.total_days,
+          remaining_days = excluded.remaining_days,
+          updated_at = CURRENT_TIMESTAMP
+        """,
+        (lookup, encrypt_text(user.get("id", "")), encrypt_text(user.get("name", "")), year, float(total), remaining),
+    )
+
 def leave_status_label(status):
     if status in ("approved", "승인"):
         return "승인"
@@ -875,10 +1002,10 @@ def ensure_leave_balance(conn, user, year=None):
         return existing
     conn.execute(
         """
-        INSERT INTO leave_balances (user_id_lookup, user_id_enc, user_name_enc, year, total_days)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO leave_balances (user_id_lookup, user_id_enc, user_name_enc, year, total_days, remaining_days)
+        VALUES (?, ?, ?, ?, ?, NULL)
         """,
-        (lookup, encrypt_text(user.get("id", "")), encrypt_text(user.get("name", "")), year, 15.0),
+        (lookup, encrypt_text(user.get("id", "")), encrypt_text(user.get("name", "")), year, calculate_annual_leave_days(user, year)),
     )
     return conn.execute(
         "SELECT * FROM leave_balances WHERE user_id_lookup = ? AND year = ?",
@@ -889,21 +1016,15 @@ def ensure_leave_balance(conn, user, year=None):
 def leave_summary(conn, user, year=None):
     year = int(year or date.today().year)
     balance = ensure_leave_balance(conn, user, year)
-    used_row = conn.execute(
-        """
-        SELECT COALESCE(SUM(days), 0) AS used_days
-        FROM leave_requests
-        WHERE user_id_lookup = ? AND year = ? AND status = 'approved'
-        """,
-        (id_lookup(user.get("id", "")), year),
-    ).fetchone()
     total = float(balance["total_days"] or 0)
-    used = float(used_row["used_days"] or 0)
+    used = approved_leave_used_days(conn, user, year)
+    remaining = balance["remaining_days"] if "remaining_days" in balance.keys() else None
+    remaining = float(remaining) if remaining is not None else max(0, total - used)
     return {
         "year": year,
         "totalDays": total,
         "usedDays": used,
-        "remainingDays": max(0, total - used),
+        "remainingDays": max(0, remaining),
     }
 
 
@@ -998,18 +1119,7 @@ def target_leave_user(conn, user, payload):
 
 def create_leave_request(conn, user, payload):
     target_user = target_leave_user(conn, user, payload)
-    start_date = str(payload.get("startDate") or "").strip()
-    end_date = str(payload.get("endDate") or start_date).strip()
-    leave_type = str(payload.get("type") or "?곗감").strip()[:40]
-    reason = str(payload.get("reason") or "").strip()[:120]
-    try:
-        days = float(payload.get("days") or 0)
-    except (TypeError, ValueError):
-        raise ValueError("Invalid leave days.")
-    if not re.match(r"^\d{4}-\d{2}-\d{2}$", start_date) or not re.match(r"^\d{4}-\d{2}-\d{2}$", end_date):
-        raise ValueError("Invalid leave date.")
-    if days <= 0 or days > 30:
-        raise ValueError("Invalid leave days.")
+    start_date, end_date, leave_type, reason, days = validate_leave_payload(payload)
     year = leave_year(start_date)
     ensure_leave_balance(conn, target_user, year)
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1040,6 +1150,90 @@ def create_leave_request(conn, user, payload):
             now,
         ),
     )
+    if status == "approved":
+        sync_leave_remaining_days(conn, id_lookup(target_user.get("id", "")), year)
+
+
+def validate_leave_payload(payload):
+    start_date = str(payload.get("startDate") or "").strip()
+    end_date = str(payload.get("endDate") or start_date).strip()
+    leave_type = str(payload.get("type") or "연차").strip()[:40]
+    reason = str(payload.get("reason") or "").strip()[:120]
+    try:
+        days = float(payload.get("days") or 0)
+    except (TypeError, ValueError):
+        raise ValueError("Invalid leave days.")
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", start_date) or not re.match(r"^\d{4}-\d{2}-\d{2}$", end_date):
+        raise ValueError("Invalid leave date.")
+    if days <= 0 or days > 30:
+        raise ValueError("Invalid leave days.")
+    cursor = date.fromisoformat(start_date)
+    last = date.fromisoformat(end_date)
+    while cursor <= last:
+        if cursor.weekday() >= 5:
+            raise ValueError("Weekend leave dates are not allowed.")
+        cursor += timedelta(days=1)
+    return start_date, end_date, leave_type, reason, days
+
+
+def update_leave_request(conn, request_id, user, payload):
+    if not is_admin(user):
+        raise PermissionError("Admin login required.")
+    row = conn.execute("SELECT * FROM leave_requests WHERE id = ?", (int(request_id),)).fetchone()
+    if not row:
+        raise ValueError("Leave request not found.")
+    previous_lookup = row["user_id_lookup"]
+    previous_year = int(row["year"])
+    target_user = target_leave_user(conn, user, payload)
+    start_date, end_date, leave_type, reason, days = validate_leave_payload(payload)
+    year = leave_year(start_date)
+    ensure_leave_balance(conn, target_user, year)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        """
+        UPDATE leave_requests
+        SET user_id_lookup = ?,
+            user_id_enc = ?,
+            user_name_enc = ?,
+            year = ?,
+            start_date = ?,
+            end_date = ?,
+            days = ?,
+            leave_type = ?,
+            reason_enc = ?,
+            status = ?,
+            approved_by_enc = ?,
+            approved_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            id_lookup(target_user.get("id", "")),
+            encrypt_text(target_user.get("id", "")),
+            encrypt_text(target_user.get("name", "")),
+            year,
+            start_date,
+            end_date,
+            days,
+            leave_type,
+            encrypt_text(reason),
+            "approved",
+            encrypt_text(user.get("id", "")),
+            now,
+            now,
+            int(request_id),
+        ),
+    )
+    sync_leave_remaining_days(conn, previous_lookup, previous_year)
+    sync_leave_remaining_days(conn, id_lookup(target_user.get("id", "")), year)
+
+
+def delete_leave_request(conn, request_id):
+    row = conn.execute("SELECT id, user_id_lookup, year FROM leave_requests WHERE id = ?", (int(request_id),)).fetchone()
+    if not row:
+        raise ValueError("Leave request not found.")
+    conn.execute("DELETE FROM leave_requests WHERE id = ?", (int(request_id),))
+    sync_leave_remaining_days(conn, row["user_id_lookup"], int(row["year"]))
 
 
 def update_leave_status(conn, request_id, status, approver):
@@ -1066,6 +1260,7 @@ def update_leave_status(conn, request_id, status, approver):
             int(request_id),
         ),
     )
+    sync_leave_remaining_days(conn, row["user_id_lookup"], int(row["year"]))
 
 
 def project_logs(conn, page=1, page_size=10):
@@ -2346,6 +2541,10 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                         update_leave_status(conn, parts[0], payload.get("status") or "approved", user)
                         conn.commit()
                         return self.write_json({"ok": True, "requests": leave_approvals(conn)})
+                    if len(parts) == 1 and parts[0]:
+                        update_leave_request(conn, parts[0], user, payload)
+                        conn.commit()
+                        return self.write_json({"ok": True, "requests": approved_leave_calendar(conn), "users": get_users(conn)})
                 if parsed.path.startswith("/api/users/"):
                     user = current_user(self)
                     if not user or user.get("role") != "admin":
@@ -2471,6 +2670,14 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                     delete_company_holiday(conn, holiday_id)
                     conn.commit()
                     return self.write_json({"ok": True, "holidays": company_holidays(conn)})
+                if parsed.path.startswith("/api/leaves/"):
+                    user = current_user(self)
+                    if not is_admin(user):
+                        return self.write_error_json("Admin login required.", HTTPStatus.UNAUTHORIZED)
+                    leave_id = unquote(parsed.path.split("/api/leaves/", 1)[1])
+                    delete_leave_request(conn, leave_id)
+                    conn.commit()
+                    return self.write_json({"ok": True, "requests": approved_leave_calendar(conn), "users": get_users(conn)})
                 if parsed.path.startswith("/api/departments/"):
                     user = current_user(self)
                     if not is_admin(user):
@@ -2540,8 +2747,10 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
         if conn.execute("SELECT 1 FROM users_secure WHERE id_lookup = ?", (id_lookup(user_id),)).fetchone():
             return self.write_json({"ok": False, "message": "이미 사용 중인 아이디입니다.", "users": get_users(conn)})
         upsert_secure_user(conn, user_id, hash_password(password), name[:80], role, approval, department, position, hire_date, resign_date)
-        conn.commit()
         row = conn.execute("SELECT * FROM users_secure WHERE id_lookup = ?", (id_lookup(user_id),)).fetchone()
+        created_user = public_user(row)
+        set_leave_balance(conn, created_user, date.today().year, payload.get("leaveTotalDays"), payload.get("leaveRemainingDays"))
+        conn.commit()
         return self.write_json({"ok": True, "user": public_user(row), "users": get_users(conn), "message": "회원이 등록되었습니다."})
 
     def update_user(self, conn, user_id, payload):
@@ -2568,8 +2777,13 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
                 return self.write_json({"ok": False, "message": "기본 관리자 비밀번호는 사용할 수 없습니다.", "users": get_users(conn)})
             password = hash_password(new_password)
         upsert_secure_user(conn, current["id"], password, name, role, approval, department, position, hire_date, resign_date)
-        conn.commit()
         next_row = conn.execute("SELECT * FROM users_secure WHERE id_lookup = ?", (id_lookup(current["id"]),)).fetchone()
+        updated_user = public_user(next_row)
+        if "leaveTotalDays" in payload or "leaveRemainingDays" in payload:
+            set_leave_balance(conn, updated_user, date.today().year, payload.get("leaveTotalDays"), payload.get("leaveRemainingDays"))
+        else:
+            ensure_leave_balance(conn, updated_user, date.today().year)
+        conn.commit()
         return self.write_json({"ok": True, "user": public_user(next_row), "users": get_users(conn)})
 
 
@@ -2583,4 +2797,6 @@ def run(port=8766):
 
 if __name__ == "__main__":
     run(int(os.environ.get("PORT", "8766")))
+
+
 

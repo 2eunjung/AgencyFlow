@@ -61,6 +61,10 @@
             <label>입사일<input id="memberHireDate" type="date" /></label>
             <label>퇴사일<input id="memberResignDate" type="date" /></label>
           </div>
+          <div class="member-inline-fields">
+            <label>총 연차<input id="memberLeaveTotalDays" type="number" min="0" max="25" step="0.5" /></label>
+            <label>잔여 연차<input id="memberLeaveRemainingDays" type="number" min="0" max="25" step="0.5" /></label>
+          </div>
           <button id="memberSubmitBtn" class="primary-btn" type="submit">등록</button>
           <p id="memberMessage"></p>
         </div>
@@ -123,7 +127,7 @@
           <label>사유
             <input id="leaveReason" autocomplete="off" maxlength="120" placeholder="연차 사유" />
           </label>
-          <button class="primary-btn" type="submit">등록</button>
+          <button class="primary-btn" type="submit">신청</button>
           <p id="leaveMessage"></p>
         </div>
       </form>
@@ -212,7 +216,7 @@
       <form id="vacationLeaveForm" class="login-card">
         <div class="panel-head">
           <div>
-            <h2>연차 등록</h2>
+            <h2 id="vacationLeaveDialogTitle">연차 등록</h2>
           </div>
           <button id="closeVacationLeaveDialog" class="icon-btn" aria-label="닫기" type="button">&times;</button>
         </div>
@@ -246,7 +250,10 @@
           <label>사유
             <input id="vacationLeaveMemo" type="text" autocomplete="off" maxlength="120" placeholder="연차 사유" />
           </label>
-          <button class="primary-btn" type="submit">등록</button>
+          <div class="form-actions split-actions">
+            <button id="vacationLeaveDeleteBtn" class="ghost-btn danger hidden" type="button">삭제</button>
+            <button id="vacationLeaveSubmitBtn" class="primary-btn" type="submit">등록</button>
+          </div>
           <p id="vacationLeaveMessage"></p>
         </div>
       </form>
@@ -334,3 +341,9 @@
 
     <datalist id="statusList"></datalist>
     <datalist id="milestoneList"></datalist>
+
+
+
+
+
+
