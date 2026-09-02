@@ -1,0 +1,349 @@
+    <dialog id="loginDialog" class="login-dialog">
+      <form id="loginForm" class="login-card">
+        <div class="panel-head">
+          <div>
+            <h2>로그인</h2>
+          </div>
+          <button id="closeLogin" class="icon-btn" aria-label="닫기" type="button">&times;</button>
+        </div>
+        <div class="login-body">
+          <label>아이디<input id="loginId" autocomplete="username" placeholder="아이디" /></label>
+          <label>비밀번호<input id="loginPassword" type="password" autocomplete="current-password" placeholder="비밀번호" /></label>
+          <button id="loginSubmit" class="primary-btn" value="default" type="submit">로그인</button>
+          <p id="loginMessage"></p>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="memberDialog" class="login-dialog">
+      <form id="memberForm" class="login-card">
+        <div class="panel-head">
+          <div>
+            <h2 id="memberDialogTitle">회원 추가</h2>
+          </div>
+          <button id="closeMemberDialog" class="icon-btn" aria-label="닫기" type="button">×</button>
+        </div>
+        <div class="login-body">
+          <label>아이디<input id="memberId" autocomplete="off" placeholder="아이디" /></label>
+          <label id="memberPasswordLabel">
+            <span id="memberPasswordTitle">비밀번호</span>
+            <input id="memberPassword" type="password" autocomplete="new-password" placeholder="알파벳+숫자+특수문자 8자 이상" />
+          </label>
+          <label id="memberPasswordConfirmWrap" class="hidden">
+            <span>비밀번호 확인</span>
+            <input id="memberPasswordConfirm" type="password" autocomplete="new-password" placeholder="비밀번호 확인" />
+          </label>
+          <div class="member-inline-fields">
+            <label>부서
+              <select id="memberDepartment" class="member-dialog-select"></select>
+            </label>
+            <label>직급
+              <select id="memberPosition" class="member-dialog-select"></select>
+            </label>
+          </div>
+          <label class="member-full-field">이름<input id="memberName" autocomplete="off" placeholder="이름" /></label>
+          <div class="member-inline-fields">
+            <label>권한
+              <select id="memberRole" class="member-dialog-select">
+                <option value="user">일반</option>
+                <option value="team_lead">팀장</option>
+                <option value="admin">관리자</option>
+              </select>
+            </label>
+            <label>재직 여부
+              <select id="memberApproval" class="member-dialog-select">
+                <option value="비활성화">퇴사</option>
+                <option value="활성화">재직</option>
+              </select>
+            </label>
+          </div>
+          <div class="member-inline-fields">
+            <label>입사일<input id="memberHireDate" type="date" /></label>
+            <label>퇴사일<input id="memberResignDate" type="date" /></label>
+          </div>
+          <div class="member-inline-fields">
+            <label>총 연차<input id="memberLeaveTotalDays" type="number" min="0" max="25" step="0.5" /></label>
+            <label>잔여 연차<input id="memberLeaveRemainingDays" type="number" min="0" max="25" step="0.5" /></label>
+          </div>
+          <button id="memberSubmitBtn" class="primary-btn" type="submit">등록</button>
+          <p id="memberMessage"></p>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="statusDialog" class="login-dialog">
+      <form id="statusForm" class="login-card">
+        <div class="panel-head">
+          <div>
+            <h2>상태 변경</h2>
+            <p id="statusProjectName">선택한 프로젝트의 상태를 변경합니다.</p>
+          </div>
+          <button id="closeStatus" class="icon-btn" aria-label="닫기" type="button">×</button>
+        </div>
+        <div class="login-body">
+          <label>상태값
+            <select id="statusSelect"></select>
+          </label>
+          <button class="primary-btn" type="submit">변경</button>
+          <p>작업상태 목록에서 선택한 값으로 변경됩니다.</p>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="leaveDialog" class="login-dialog">
+      <form id="leaveForm" class="login-card">
+        <div class="panel-head">
+          <div>
+            <h2>연차 등록</h2>
+          </div>
+          <button id="closeLeaveDialog" class="icon-btn" aria-label="닫기" type="button">×</button>
+        </div>
+        <div class="login-body">
+          <label id="leaveUserField" class="vacation-leave-user-field hidden">이름
+            <input id="leaveUserSearch" type="search" autocomplete="off" placeholder="이름 또는 아이디 검색" />
+            <input id="leaveUserId" type="hidden" />
+            <div id="leaveUserResults" class="schedule-project-results" hidden></div>
+          </label>
+          <div class="leave-dialog-row">
+            <label>시작일
+              <input id="leaveStartDate" type="date" required />
+            </label>
+            <label>종료일
+              <input id="leaveEndDate" type="date" required />
+            </label>
+          </div>
+          <div class="leave-dialog-row">
+            <label>구분
+              <select id="leaveType" class="member-dialog-select">
+                <option value="연차">연차</option>
+                <option value="오전 반차">오전 반차</option>
+                <option value="오후 반차">오후 반차</option>
+              </select>
+            </label>
+            <label>차감 일수
+              <input id="leaveDays" type="number" min="0.5" max="30" step="0.5" value="1" />
+            </label>
+          </div>
+          <label>사유
+            <input id="leaveReason" autocomplete="off" maxlength="120" placeholder="연차 사유" />
+          </label>
+          <button class="primary-btn" type="submit">신청</button>
+          <p id="leaveMessage"></p>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="shortcutDialog" class="login-dialog">
+      <form id="shortcutForm" class="login-card">
+        <div class="panel-head">
+          <div>
+            <h2 id="shortcutDialogTitle">홈페이지 URL 등록</h2>
+            <p id="shortcutProjectName">프로젝트 URL을 등록하세요.</p>
+          </div>
+          <button id="closeShortcut" class="icon-btn" aria-label="닫기" type="button">×</button>
+        </div>
+        <div class="login-body">
+          <label>URL
+            <input id="shortcutUrlInput" type="text" placeholder="https://example.com" required />
+          </label>
+          <button class="primary-btn" type="submit">등록 후 이동</button>
+          <p>등록된 URL은 프로젝트 상세에서도 수정할 수 있습니다.</p>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="scheduleDialog" class="login-dialog schedule-dialog">
+      <form id="scheduleForm" class="login-card">
+        <div class="panel-head">
+          <div>
+            <h2 id="scheduleDialogTitle">일정 추가</h2>
+            <p id="scheduleDialogDate">일정을 등록합니다.</p>
+          </div>
+          <button id="closeScheduleDialog" class="icon-btn" aria-label="닫기" type="button">×</button>
+        </div>
+        <div class="login-body schedule-dialog-body">
+          <label>일자
+            <input id="scheduleDateInput" type="date" required />
+          </label>
+          <label id="scheduleProjectField">프로젝트
+            <div id="scheduleProjectPicker" class="schedule-project-picker">
+              <input id="scheduleProjectSearch" type="search" placeholder="프로젝트명 또는 PJ No 검색" autocomplete="off" />
+              <input id="scheduleProjectId" type="hidden" />
+              <div id="scheduleProjectResults" class="schedule-project-results" role="listbox" hidden></div>
+            </div>
+          </label>
+          <div id="scheduleAssignFields" class="schedule-assign-fields hidden">
+            <label>마일스톤
+              <select id="scheduleMilestoneSelect" class="schedule-dialog-input"></select>
+            </label>
+            <div class="schedule-staff-row">
+              <label>담당 역할
+                <select id="scheduleStaffRoleSelect" class="schedule-dialog-input">
+                  <option value="PM">PM</option>
+                  <option value="디자이너">디자이너</option>
+                  <option value="퍼블리셔">퍼블리셔</option>
+                  <option value="프로그래머">프로그래머</option>
+                </select>
+              </label>
+              <label>담당자
+                <input id="scheduleStaffNameInput" class="schedule-dialog-input" type="text" placeholder="담당자명 입력" maxlength="40" />
+              </label>
+            </div>
+          </div>
+          <label>상세
+            <input id="scheduleDetailInput" class="schedule-dialog-input" type="text" placeholder="일정 상세 내용 입력" maxlength="120" required />
+          </label>
+          <label id="scheduleCompletedField" class="check-option schedule-completed-field hidden">
+            <input id="scheduleCompletedInput" type="checkbox" />
+            완료
+          </label>
+          <label id="scheduleNoteField" class="hidden">비고
+            <textarea id="scheduleNoteInput" class="schedule-dialog-input" placeholder="일정 비고 입력" rows="3"></textarea>
+          </label>
+          <details id="scheduleHistoryField" class="schedule-history-field hidden">
+            <summary>일정 히스토리</summary>
+            <div id="scheduleHistoryList" class="schedule-history-list"></div>
+          </details>
+          <div class="schedule-dialog-actions">
+            <button id="scheduleProjectDetailButton" class="ghost-btn hidden" type="button">프로젝트 상세</button>
+            <button id="scheduleSubmitButton" class="primary-btn" type="submit">일정 추가</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="vacationLeaveDialog" class="login-dialog">
+      <form id="vacationLeaveForm" class="login-card">
+        <div class="panel-head">
+          <div>
+            <h2 id="vacationLeaveDialogTitle">연차 등록</h2>
+          </div>
+          <button id="closeVacationLeaveDialog" class="icon-btn" aria-label="닫기" type="button">&times;</button>
+        </div>
+        <div class="login-body">
+          <label class="vacation-leave-user-field">이름
+            <input id="vacationLeaveUserSearch" type="search" autocomplete="off" placeholder="이름 또는 아이디 검색" required />
+            <input id="vacationLeaveUserId" type="hidden" />
+            <div id="vacationLeaveUserResults" class="schedule-project-results" hidden></div>
+          </label>
+          <div class="leave-dialog-row">
+            <label>시작일
+              <input id="vacationLeaveStartDate" type="date" required />
+            </label>
+            <label>종료일
+              <input id="vacationLeaveEndDate" type="date" required />
+            </label>
+          </div>
+          <div class="leave-dialog-row">
+            <label>구분
+              <select id="vacationLeaveType" class="member-dialog-select" required>
+                <option value="연차">연차</option>
+                <option value="오전 반차">오전 반차</option>
+                <option value="오후 반차">오후 반차</option>
+                <option value="경조사">경조사</option>
+              </select>
+            </label>
+            <label>차감 일수
+              <input id="vacationLeaveDays" type="number" min="0.5" max="30" step="0.5" value="1" required />
+            </label>
+          </div>
+          <label>사유
+            <input id="vacationLeaveMemo" type="text" autocomplete="off" maxlength="120" placeholder="연차 사유" />
+          </label>
+          <div class="form-actions split-actions">
+            <button id="vacationLeaveDeleteBtn" class="ghost-btn danger hidden" type="button">삭제</button>
+            <button id="vacationLeaveSubmitBtn" class="primary-btn" type="submit">등록</button>
+          </div>
+          <p id="vacationLeaveMessage"></p>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="companyHolidayDialog" class="login-dialog">
+      <form id="companyHolidayForm" class="login-card">
+        <div class="panel-head">
+          <div>
+            <h2 id="companyHolidayDialogTitle">휴일 추가</h2>
+          </div>
+          <button id="closeCompanyHolidayDialog" class="icon-btn" aria-label="닫기" type="button">&times;</button>
+        </div>
+        <div class="login-body">
+          <div class="leave-dialog-row">
+            <label>휴일 구분
+              <select id="companyHolidayDialogKind" class="member-dialog-select">
+                <option value="회사휴일">회사휴일</option>
+                <option value="대체공휴일">대체공휴일</option>
+                <option value="국가공휴일">국가공휴일</option>
+              </select>
+            </label>
+            <label>휴일 일자
+              <input id="companyHolidayDialogDate" type="date" required />
+            </label>
+          </div>
+          <label>휴일명
+            <input id="companyHolidayDialogName" type="text" autocomplete="off" maxlength="80" placeholder="휴일명" required />
+          </label>
+          <div class="schedule-dialog-actions">
+            <button id="companyHolidayDeleteBtn" class="ghost-btn danger hidden" type="button">삭제</button>
+            <button class="primary-btn" type="submit">저장</button>
+          </div>
+          <p id="companyHolidayDialogMessage"></p>
+        </div>
+      </form>
+    </dialog>
+
+
+    <dialog id="projectCompletionDialog" class="login-dialog project-completion-dialog">
+      <form id="projectCompletionForm" class="login-card">
+        <div class="panel-head">
+          <div>
+            <h2>완료 등록</h2>
+            <p id="projectCompletionDialogProjectName"></p>
+          </div>
+          <button id="closeProjectCompletionDialog" class="icon-btn" aria-label="닫기" type="button">&times;</button>
+        </div>
+        <div class="login-body">
+          <select id="projectCompletionType" class="member-dialog-select" required>
+            <option value="design">디자인완료</option>
+            <option value="publishing">퍼블리싱완료</option>
+            <option value="program">프로그램완료</option>
+          </select>
+          <textarea id="projectCompletionMemo" class="project-completion-memo" rows="3" maxlength="200" placeholder="비고 내용을 입력하세요."></textarea>
+          <button class="primary-btn" type="submit">등록</button>
+          <p id="projectCompletionDialogMessage"></p>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="downloadDialog" class="login-dialog">
+      <form id="downloadForm" class="login-card">
+        <div class="panel-head">
+          <div>
+            <h2>데이터 다운로드</h2>
+            <p>다운로드할 파일 형식을 선택하세요.</p>
+          </div>
+          <button id="closeDownload" class="icon-btn" aria-label="닫기" type="button">×</button>
+        </div>
+        <div class="login-body">
+          <label class="check-option">
+            <input name="downloadType" type="radio" value="excel" checked />
+            엑셀 (프로젝트 상세)
+          </label>
+          <label class="check-option">
+            <input name="downloadType" type="radio" value="json" />
+            JSON (전체 데이터)
+          </label>
+          <p>엑셀은 프로젝트 상세 항목만, JSON은 DB 이관용 전체 데이터를 내려받습니다.</p>
+          <button class="primary-btn" type="submit">다운로드</button>
+        </div>
+      </form>
+    </dialog>
+
+    <datalist id="statusList"></datalist>
+    <datalist id="milestoneList"></datalist>
+
+
+
+
+
+

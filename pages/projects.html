@@ -1,0 +1,65 @@
+      <section id="projectsView" class="view">
+        <section class="workspace">
+          <div class="list-panel">
+            <div class="panel-head">
+              <div>
+                <h1 id="projectsTitle">프로젝트 관리(0건)</h1>
+              </div>
+              <div class="panel-actions">
+                <button id="downloadProjectsData" class="ghost-btn" type="button">데이터 다운로드</button>
+                <button id="newProject" class="primary-btn" type="button">+ 신규</button>
+              </div>
+            </div>
+
+            <div class="filters">
+              <input id="searchInput" type="search" placeholder="프로젝트 상세 전체 검색" />
+              <select id="pmFilter" class="staff-filter" aria-label="PM">
+                <option value="">전체 PM</option>
+              </select>
+              <div class="multi-select" id="milestoneFilterWrap">
+                <button id="milestoneFilterToggle" class="multi-select-toggle" type="button" aria-haspopup="listbox" aria-expanded="false">
+                  <span id="milestoneFilterLabel" class="multi-select-label">전체 마일스톤</span>
+                  <span class="multi-select-caret" aria-hidden="true">▾</span>
+                </button>
+                <div id="milestoneFilterMenu" class="multi-select-menu" role="listbox" aria-label="마일스톤 필터" aria-multiselectable="true"></div>
+              </div>
+              <div class="multi-select" id="statusFilterWrap">
+                <button id="statusFilterToggle" class="multi-select-toggle" type="button" aria-haspopup="listbox" aria-expanded="false">
+                  <span id="statusFilterLabel" class="multi-select-label">전체 작업상태</span>
+                  <span class="multi-select-caret" aria-hidden="true">▾</span>
+                </button>
+                <div id="statusFilterMenu" class="multi-select-menu" role="listbox" aria-label="작업상태 필터" aria-multiselectable="true"></div>
+              </div>
+              <div class="multi-select" id="projectOptionFilterWrap">
+                <button id="projectOptionFilterToggle" class="multi-select-toggle" type="button" aria-haspopup="listbox" aria-expanded="false">
+                  <span id="projectOptionFilterLabel" class="multi-select-label">상세 조건</span>
+                  <span class="multi-select-caret" aria-hidden="true">▾</span>
+                </button>
+                <div id="projectOptionFilterMenu" class="multi-select-menu" role="listbox" aria-label="상세 조건 필터" aria-multiselectable="true"></div>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table class="projects-table">
+                <thead>
+                  <tr>
+                    <th class="table-sort-trigger" data-sort-list="projects" data-sort-key="projectNo" scope="col">PJ No <span data-sort-icon="projects:projectNo" aria-hidden="true">↕</span></th>
+                    <th>프로젝트명</th>
+                    <th class="table-sort-trigger" data-sort-list="projects" data-sort-key="milestone" scope="col">마일스톤 <span data-sort-icon="projects:milestone" aria-hidden="true">↕</span></th>
+                    <th>작업상태</th>
+                    <th>PM</th>
+                    <th>디자이너</th>
+                    <th>퍼블리셔</th>
+                    <th>프로그래머</th>
+                    <th>바로가기</th>
+                    <th>견적서</th>
+                  </tr>
+                </thead>
+                <tbody id="projectRows"></tbody>
+              </table>
+            </div>
+          </div>
+
+        </section>
+      </section>
+

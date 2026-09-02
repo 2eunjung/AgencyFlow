@@ -1,0 +1,26 @@
+      <section id="issuesView" class="view">
+        <div class="list-panel issue-project-panel">
+          <div class="panel-head">
+            <div>
+              <h1 id="issueProjectsTitle">이슈 프로젝트(0건)</h1>
+            </div>
+            <button class="primary-btn" data-view-shortcut="projects" type="button">프로젝트 목록으로 이동</button>
+          </div>
+          <div class="table-wrap issue-project-table-wrap">
+            <table class="issue-projects-table">
+              <thead>
+                <tr>
+                  <th class="table-sort-trigger" data-sort-list="issues" data-sort-key="projectNo" scope="col">PJ No <span data-sort-icon="issues:projectNo" aria-hidden="true">&#8597;</span></th>
+                  <th>프로젝트명</th>
+                  <th class="table-sort-trigger" data-sort-list="issues" data-sort-key="milestone" scope="col">마일스톤 <span data-sort-icon="issues:milestone" aria-hidden="true">&#8597;</span></th>
+                  <th>작업상태</th>
+                  <th>PM</th>
+                  <th>최근 이슈</th>
+                  <th>바로가기</th>
+                </tr>
+              </thead>
+              <tbody id="issueProjectRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>

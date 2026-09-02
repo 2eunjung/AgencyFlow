@@ -1,0 +1,36 @@
+      <section id="projectAssignmentView" class="view">
+        <div class="list-panel management-panel">
+          <div class="panel-head">
+            <div>
+              <h1 id="projectAssignmentTitle">프로젝트 배정(0건)</h1>
+            </div>
+          </div>
+          <div class="filters assignment-filters">
+            <input id="projectAssignmentSearchInput" type="search" placeholder="PJ No 또는 프로젝트명 검색" autocomplete="off" />
+            <select id="projectAssignmentPmFilter"></select>
+            <select id="projectAssignmentDesignerFilter"></select>
+            <select id="projectAssignmentPublisherFilter"></select>
+            <select id="projectAssignmentProgrammerFilter"></select>
+          </div>
+          <div class="table-wrap management-table-wrap">
+            <table class="management-table">
+              <thead>
+                <tr>
+                  <th>PJ No</th>
+                  <th>프로젝트명</th>
+                  <th>PM</th>
+                  <th>디자이너</th>
+                  <th>퍼블리셔</th>
+                  <th>프로그래머</th>
+                </tr>
+              </thead>
+              <tbody id="projectAssignmentRows">
+                <tr>
+                  <td colspan="6" class="empty-cell">표시할 프로젝트가 없습니다.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+

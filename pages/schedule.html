@@ -1,0 +1,79 @@
+      <section id="scheduleView" class="view">
+        <div class="list-panel schedule-panel">
+          <div class="panel-head">
+            <div>
+              <h1>프로젝트 일정</h1>
+            </div>
+          </div>
+
+          <div class="schedule-content">
+            <input id="scheduleViewCalendar" class="schedule-mode-input" type="radio" name="scheduleViewMode" checked />
+            <input id="scheduleViewList" class="schedule-mode-input" type="radio" name="scheduleViewMode" />
+
+            <div class="schedule-toolbar">
+              <div class="schedule-view-tabs" role="tablist" aria-label="일정 보기 방식">
+                <label class="schedule-view-tab" for="scheduleViewCalendar" role="tab">캘린더</label>
+                <label class="schedule-view-tab" for="scheduleViewList" role="tab">리스트</label>
+              </div>
+              <div class="filters schedule-filters">
+                <input id="scheduleSearchInput" type="search" placeholder="프로젝트명 또는 PJ No 검색" autocomplete="off" />
+              </div>
+            </div>
+
+            <div class="schedule-calendar-wrap">
+              <div class="schedule-calendar-head">
+                <div class="schedule-list-period">
+                  <input id="scheduleCalendarMonth" class="schedule-period-input" type="radio" name="scheduleCalendarPeriod" checked />
+                  <input id="scheduleCalendarWeek" class="schedule-period-input" type="radio" name="scheduleCalendarPeriod" />
+                  <div class="schedule-list-period-tabs" role="tablist" aria-label="캘린더 기간">
+                    <label class="schedule-list-period-tab" for="scheduleCalendarMonth" role="tab">월별</label>
+                    <label class="schedule-list-period-tab" for="scheduleCalendarWeek" role="tab">주별</label>
+                  </div>
+                  <div class="schedule-calendar-nav">
+                    <button class="ghost-btn schedule-nav-btn" id="schedulePrevMonth" type="button" aria-label="이전 기간">‹</button>
+                    <strong class="schedule-month-label" id="scheduleMonthLabel">2026년 7월</strong>
+                    <button class="ghost-btn schedule-nav-btn" id="scheduleNextMonth" type="button" aria-label="다음 기간">›</button>
+                  </div>
+                </div>
+                <button class="schedule-add-btn schedule-add-btn-solid" id="addScheduleFromCalendar" type="button">+ 일정 추가</button>
+              </div>
+              <div class="schedule-calendar-grid" id="scheduleCalendarGrid" aria-label="프로젝트 일정 캘린더"></div>
+            </div>
+
+            <div class="schedule-list-wrap">
+              <div class="schedule-list-toolbar">
+                <div class="schedule-list-period">
+                  <input id="scheduleListMonth" class="schedule-period-input" type="radio" name="scheduleListPeriod" checked />
+                  <input id="scheduleListWeek" class="schedule-period-input" type="radio" name="scheduleListPeriod" />
+                  <div class="schedule-list-period-tabs" role="tablist" aria-label="리스트 기간">
+                    <label class="schedule-list-period-tab" for="scheduleListMonth" role="tab">월별</label>
+                    <label class="schedule-list-period-tab" for="scheduleListWeek" role="tab">주별</label>
+                  </div>
+                  <div class="schedule-list-nav">
+                    <button class="ghost-btn schedule-nav-btn" id="scheduleListPrev" type="button" aria-label="이전 기간">‹</button>
+                    <strong class="schedule-month-label" id="scheduleListPeriodLabel">2026년 7월</strong>
+                    <button class="ghost-btn schedule-nav-btn" id="scheduleListNext" type="button" aria-label="다음 기간">›</button>
+                  </div>
+                </div>
+                <button class="schedule-add-btn schedule-add-btn-solid" id="addScheduleFromList" type="button">+ 일정 추가</button>
+              </div>
+              <div class="table-wrap schedule-table-wrap">
+                <table class="schedule-list-table management-table">
+                  <thead>
+                    <tr>
+                      <th>날짜</th>
+                      <th>프로젝트명</th>
+                      <th>마일스톤</th>
+                      <th>담당자</th>
+                      <th>상세</th>
+                      <th>완료</th>
+                    </tr>
+                  </thead>
+                  <tbody id="scheduleRows"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
