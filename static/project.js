@@ -7155,7 +7155,7 @@ function renderProjectLibraryRows() {
           <td class="library-content-cell">${post.important ? '<span class="library-important-badge">중요</span>' : ""}<span>${escapeHtml(title || "제목 없음")}${escapeHtml(commentLabel)}</span></td>
           <td>${attachmentCount ? `${attachmentCount.toLocaleString("ko-KR")}개` : post.url ? `<a class="library-link" href="${escapeAttr(post.url)}" target="_blank" rel="noopener noreferrer">열기</a>` : "-"}</td>
           <td>${escapeHtml(post.createdByName || "-")}</td>
-          <td>${escapeHtml(formatDateTime(post.createdAt || ""))}</td>
+          <td>${escapeHtml(String(post.createdAt || "").slice(0, 10) || "-")}</td>
         </tr>
       `;
     })
