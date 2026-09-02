@@ -7183,6 +7183,7 @@ function openProjectLibraryForm(postId = "") {
   if ($("projectLibraryImportantInput")) $("projectLibraryImportantInput").checked = Boolean(post?.important);
   setValue("projectLibraryTitleInput", post?.title || "");
   setValue("projectLibraryUrlInput", post?.url || "");
+  setValue("projectLibraryMessengerUrlInput", post?.messengerUrl || "");
   setValue("projectLibraryContentInput", post?.content || "");
   renderProjectLibraryAttachments();
   $("projectLibraryDeleteBtn")?.classList.toggle("hidden", !post || !isAdmin());
@@ -7321,6 +7322,12 @@ function openProjectLibraryDetail(postId) {
       <span>${escapeHtml(post.createdByName || "-")} · ${escapeHtml(formatDateTime(post.createdAt || ""))}</span>
     `;
   }
+  if ($("projectLibraryDetailMessengerUrl")) {
+    const messengerUrl = post.messengerUrl || "";
+    $("projectLibraryDetailMessengerUrl").innerHTML = messengerUrl
+      ? `<strong>메신저 링크 :</strong> <a class="library-link" href="${escapeAttr(messengerUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(messengerUrl)}</a>`
+      : "";
+  }
   const attachments = Array.isArray(post.attachments) ? post.attachments : [];
   const attachmentHtml = attachments.length
     ? `<div class="project-library-detail-attachments">
@@ -7398,6 +7405,7 @@ async function submitProjectLibraryForm(event) {
     important: Boolean($("projectLibraryImportantInput")?.checked),
     title: valueOf("projectLibraryTitleInput").trim(),
     url: valueOf("projectLibraryUrlInput").trim(),
+    messengerUrl: valueOf("projectLibraryMessengerUrlInput").trim(),
     content: valueOf("projectLibraryContentInput").trim(),
     attachments: projectLibraryAttachments,
   };

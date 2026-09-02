@@ -2284,6 +2284,7 @@ def normalize_project_library_post(post):
         "important": bool((post or {}).get("important")),
         "title": str((post or {}).get("title") or "").strip(),
         "url": str((post or {}).get("url") or "").strip(),
+        "messengerUrl": str((post or {}).get("messengerUrl") or "").strip(),
         "content": str((post or {}).get("content") or "").strip(),
         "attachments": normalize_project_library_attachments((post or {}).get("attachments")),
         "createdById": str((post or {}).get("createdById") or "").strip(),
@@ -2391,7 +2392,7 @@ def validate_project_library_attachments(attachments):
     return files
 
 
-def validate_project_library_url(url):
+def validate_project_library_url(url, label="자료 URL"):
     value = str(url or "").strip()
     if not value:
         return ""
@@ -2399,7 +2400,7 @@ def validate_project_library_url(url):
         value = f"https://{value}"
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("자료 URL은 http 또는 https 주소만 등록할 수 있습니다.")
+        raise ValueError(f"{label}은 http 또는 https 주소만 등록할 수 있습니다.")
     return value[:500]
 
 
@@ -2430,6 +2431,7 @@ def create_project_library_post(conn, mode, user, payload):
         "important": bool(payload.get("important")),
         "title": title[:120],
         "url": validate_project_library_url(payload.get("url")),
+        "messengerUrl": validate_project_library_url(payload.get("messengerUrl"), "메신저 링크"),
         "content": content[:3000],
         "attachments": attachments,
         "createdById": user.get("id", ""),
@@ -2460,6 +2462,7 @@ def update_project_library_post(conn, mode, post_id, payload):
             "important": bool(payload.get("important")),
             "title": title[:120],
             "url": validate_project_library_url(payload.get("url")),
+            "messengerUrl": validate_project_library_url(payload.get("messengerUrl"), "메신저 링크"),
             "content": content[:3000],
             "attachments": attachments,
             "updatedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

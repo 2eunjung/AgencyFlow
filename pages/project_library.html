@@ -37,11 +37,6 @@
             <div>
               <h1 id="projectLibraryFormTitle">자료 등록</h1>
             </div>
-            <div class="project-library-form-actions">
-              <button id="projectLibraryCancelBtn" class="ghost-btn" type="button">목록</button>
-              <button id="projectLibraryDeleteBtn" class="ghost-btn danger hidden" type="button">삭제</button>
-              <button id="projectLibrarySubmitBtn" class="primary-btn" type="submit">등록</button>
-            </div>
           </div>
           <div class="project-library-write-body">
             <label>프로젝트
@@ -70,7 +65,15 @@
             <label>자료 URL
               <input id="projectLibraryUrlInput" type="text" autocomplete="off" maxlength="500" placeholder="example.com 또는 https://example.com" />
             </label>
+            <label>메신저 링크
+              <input id="projectLibraryMessengerUrlInput" type="text" autocomplete="off" maxlength="500" placeholder="고객과 메세지한 링크" />
+            </label>
             <p id="projectLibraryFormMessage"></p>
+            <div class="project-library-form-actions">
+              <button id="projectLibraryCancelBtn" class="ghost-btn" type="button">목록</button>
+              <button id="projectLibraryDeleteBtn" class="ghost-btn danger hidden" type="button">삭제</button>
+              <button id="projectLibrarySubmitBtn" class="primary-btn" type="submit">등록</button>
+            </div>
           </div>
         </form>
       </section>
@@ -84,6 +87,7 @@
             </div>
           </div>
           <div class="project-library-write-body">
+            <div id="projectLibraryDetailMessengerUrl" class="project-library-messenger-link"></div>
             <div id="projectLibraryDetailContent" class="project-library-detail-content"></div>
             <div id="projectLibraryDetailLink" class="project-library-detail-link"></div>
             <div class="project-library-comments">
