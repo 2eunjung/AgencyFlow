@@ -709,6 +709,7 @@ const KOREA_PUBLIC_HOLIDAYS = [
 let progressStatusFilter = "";
 let milestoneFilter = "";
 let selectedMilestoneFilters = [];
+const UNASSIGNED_PM_FILTER = "__unassigned__";
 let selectedStatusFilters = [];
 let selectedProjectOptionFilters = ["excludeClosed", "workSchedule"];
 let editingStatusProjectId = "";
@@ -812,13 +813,17 @@ function normalizeProject(project) {
         ]
       : [];
   const communications = project.communications?.length
-    ? project.communications
+    ? project.communications.map((entry) => ({
+        ...entry,
+        createdAt: entry.createdAt || (entry.date ? `${String(entry.date).slice(0, 10)}T00:00:00` : new Date().toISOString()),
+      }))
     : project.communicationLog
       ? [
           {
             id: crypto.randomUUID(),
             date: todayDate(),
             memo: project.communicationLog,
+            createdAt: new Date().toISOString(),
           },
         ]
       : [];
@@ -840,6 +845,7 @@ function normalizeProject(project) {
     programmerId: project.programmerId || "",
     programmerAssignedAt: project.programmerAssignedAt || "",
     monthlyCollection: Boolean(project.monthlyCollection),
+    isUrgent: Boolean(project.isUrgent),
     hasLanding: Boolean(project.hasLanding),
     hasIssue: Boolean(project.hasIssue),
     hostingType: project.hostingType || "일반 웹호스팅",
@@ -1266,6 +1272,7 @@ function createEmptyProject() {
     hostingType: "일반 웹호스팅",
     hasForeignLanguage: false,
     monthlyCollection: false,
+    isUrgent: false,
     hasLanding: false,
     hasIssue: false,
     issues: [],
@@ -1305,7 +1312,15 @@ function isAdmin() {
 }
 
 function isTeamLead() {
-  return currentUser?.role === "team_lead";
+  return currentUser?.role === "team_lead" || String(currentUser?.position || "").includes("팀장");
+}
+
+function isDashboardTeamLead() {
+  return isTeamLead();
+}
+
+function canViewDetailTimestamp() {
+  return isAdmin() || isTeamLead() || isDepartment("pm");
 }
 
 function roleLabel(role) {
@@ -1379,12 +1394,20 @@ function canManageProjectQuote() {
   return isAdmin() || isDepartment("영업", "경영관리");
 }
 
-function canViewMonthlyAndIssues() {
+function canViewMonthlyProjects() {
+  return isAdmin() || isDepartment("pm");
+}
+
+function canViewIssues() {
   return isAdmin() || isTeamLead() || isDepartment("pm");
 }
 
+function isScheduleOnlyDashboardUser() {
+  return Boolean(currentUser && !isAdmin() && !isTeamLead() && !isDepartment("pm"));
+}
+
 function canViewAllProjectSchedules() {
-  return isAdmin() || isTeamLead();
+  return isAdmin() || (isTeamLead() && isDepartment("pm"));
 }
 
 function canManageAllProjectSchedules() {
@@ -1434,12 +1457,11 @@ function canEditOwnEntry(entry, basePermission) {
 
 function canViewProjectScheduleEntry(entry) {
   if (!currentUser) return false;
+  const project = projects.find((item) => item.id === entry?.projectId || (entry?.projectNo && String(item.projectNo || "") === String(entry.projectNo)));
   if (canViewAllProjectSchedules()) return true;
-  if (canUseAssignedProjectSchedules()) {
-    const project = projects.find((item) => item.id === entry?.projectId || (entry?.projectNo && String(item.projectNo || "") === String(entry.projectNo)));
-    return project ? isAssignedProject(project) : scheduleEntryOwnedByCurrentUser(entry);
-  }
-  return false;
+  if (isDepartment("pm")) return Boolean(project && isAssignedProject(project));
+  if (isTeamLead() && isProjectWorkerDepartment() && project && isDepartmentScheduleException(project, entry)) return true;
+  return scheduleEntryOwnedByCurrentUser(entry);
 }
 
 function canManageProjectScheduleEntry(project, entry = null) {
@@ -1504,6 +1526,16 @@ function formatDateTime(value) {
   return normalized || "-";
 }
 
+function formatDetailActivityDateTime(value, dateValue = "") {
+  const text = String(value || "").trim();
+  const dateText = String(dateValue || text || "").trim().slice(0, 10);
+  if (!text && !dateText) return "-";
+  if (!canViewDetailTimestamp()) return dateText || "-";
+  const normalized = formatDateTime(text || dateText);
+  const timeText = normalized.length >= 19 ? normalized.slice(11, 19) : "";
+  return dateText && timeText ? `${dateText} ${timeText}` : normalized;
+}
+
 function scheduleHistoryLabel(history) {
   return String(history?.action || "").trim() || "일정 수정";
 }
@@ -1531,7 +1563,7 @@ function renderScheduleHistoryList(entry) {
         const showDetail = !(label === "일정 완료" || label === "일정 완료 취소");
         return `<div class="schedule-history-item">
           <div class="schedule-history-head">
-            <span>${escapeHtml(formatDateTime(history.at || ""))}</span>
+            <span>${escapeHtml(formatDetailActivityDateTime(history.at || ""))}</span>
             <strong>${escapeHtml(history.actorName || "-")}</strong>
             <p>${escapeHtml(label)}</p>
           </div>
@@ -1546,7 +1578,11 @@ function renderScheduleHistoryList(entry) {
     : '<p class="empty">등록된 히스토리가 없습니다.</p>';
 }
 function canViewDashboardProjectMetrics() {
-  return isAdmin() || isDepartment("pm");
+  return isDashboardTeamLead() && isDepartment("pm");
+}
+
+function canViewManagementDashboard() {
+  return isAdmin() || isDashboardTeamLead() || isDepartment("pm");
 }
 
 function assignedProjectUserName() {
@@ -1700,13 +1736,31 @@ function isAssignedProject(project) {
   return false;
 }
 
+function isAdditionalWorkStatus(status) {
+  const value = normalizeMilestoneName(status);
+  return value === normalizeMilestoneName("오픈 전 - 추가작업") || value === normalizeMilestoneName("오픈 후 - 추가작업");
+}
+
+function isDepartmentScheduleException(project, entry) {
+  const milestone = normalizeMilestoneName(entry?.milestone || projectMilestone(project));
+  if (isAdditionalWorkStatus(projectDisplayStatus(project))) return true;
+  if (isDepartment("디자인", "디자이너")) {
+    return ["화면설계중", "화면설계", "메인시안중", "메인", "서브시안중", "서브", "상세디자인", "상세"]
+      .map(normalizeMilestoneName)
+      .includes(milestone);
+  }
+  if (isDepartment("퍼블리싱", "퍼블리셔")) return ["퍼블리싱중", "퍼블리싱"].map(normalizeMilestoneName).includes(milestone);
+  if (isDepartment("프로그램", "프로그래머")) return ["프로그램중", "프로그램"].map(normalizeMilestoneName).includes(milestone);
+  return false;
+}
+
 function canViewAssignedProjectSchedules() {
   return canUseAssignedProjectSchedules();
 }
 
 function projectScheduleVisibleProjects() {
   if (!currentUser) return accessibleProjects();
-  if (canViewAllProjectSchedules()) return isAdmin() ? projects : scheduleProjects;
+  if (canViewAllProjectSchedules() || isTeamLead()) return projects;
   if (canViewAssignedProjectSchedules()) return projects.filter(isAssignedProject);
   return [];
 }
@@ -1735,7 +1789,7 @@ function accessibleProjects() {
 }
 
 function canViewProjectCompletionApproval() {
-  return Boolean(currentUser) && (isAdmin() || !isDepartment("영업"));
+  return Boolean(currentUser) && (isAdmin() || isTeamLead() || isDepartment("pm"));
 }
 
 function canAccessView(view) {
@@ -1744,7 +1798,8 @@ function canAccessView(view) {
   if (view === "projectCompletionApproval") return canViewProjectCompletionApproval();
   if (view === "projectAssignment") return isAdmin() || isTeamLead();
   if (view === "projectLibrary" || view === "projectLibraryForm" || view === "projectLibraryDetail") return Boolean(currentUser);
-  if (view === "monthly" || view === "issues") return canViewMonthlyAndIssues();
+  if (view === "monthly") return canViewMonthlyProjects();
+  if (view === "issues") return canViewIssues();
   if (view === "leaveManagement") return Boolean(currentUser);
   return true;
 }
@@ -1838,8 +1893,11 @@ function updateNavAccess() {
   document.querySelectorAll('[data-view="loginLogs"], [data-view="projectLogs"]').forEach((item) => {
     item.classList.toggle("hidden", !isAdmin());
   });
-  document.querySelectorAll('[data-view="monthly"], [data-view="issues"]').forEach((item) => {
-    item.classList.toggle("hidden", !canViewMonthlyAndIssues());
+  document.querySelectorAll('[data-view="monthly"]').forEach((item) => {
+    item.classList.toggle("hidden", !canViewMonthlyProjects());
+  });
+  document.querySelectorAll('[data-view="issues"]').forEach((item) => {
+    item.classList.toggle("hidden", !canViewIssues());
   });
   if (!isAdmin() && (currentView === "members" || currentView === "departments" || currentView === "adminSettings" || currentView === "loginLogs" || currentView === "projectLogs" || currentView === "leaveApprovals")) {
     switchView("dashboard");
@@ -1847,7 +1905,8 @@ function updateNavAccess() {
   if (!canViewProjectCompletionApproval() && currentView === "projectCompletionApproval") switchView("dashboard");
   if (!isAdmin() && !isTeamLead() && currentView === "projectAssignment") switchView("dashboard");
   if (!currentUser && (currentView === "projectLibrary" || currentView === "projectLibraryForm" || currentView === "projectLibraryDetail")) switchView("dashboard");
-  if (!canViewMonthlyAndIssues() && (currentView === "monthly" || currentView === "issues")) switchView("dashboard");
+  if (!canViewMonthlyProjects() && currentView === "monthly") switchView("dashboard");
+  if (!canViewIssues() && currentView === "issues") switchView("dashboard");
   if (!currentUser && currentView === "leaveManagement") switchView("dashboard");
 }
 
@@ -2128,33 +2187,51 @@ function projectCompletionEntryAt(project, stageKey) {
   );
 }
 
+function projectStaffScheduleStartAt(project, staffName) {
+  const target = String(staffName || "").trim().toLowerCase();
+  if (!target) return "";
+  return (project?.schedules || [])
+    .filter((entry) => String(entry?.staffName || entry?.staff || "").trim().toLowerCase() === target)
+    .map((entry) => String(entry?.createdAt || entry?.date || "").trim())
+    .filter(Boolean)
+    .sort((a, b) => (parseProjectDateValue(a)?.getTime() || 0) - (parseProjectDateValue(b)?.getTime() || 0))[0] || "";
+}
+
 function projectPartDurationBadge(project, part) {
   const config = {
-    pm: { startStage: "program_lead", endDateField: "openDate" },
-    designer: { assignedAt: "designerAssignedAt", endStage: "design_lead", fallbackStartStage: "design_worker" },
-    publisher: { assignedAt: "publisherAssignedAt", endStage: "publishing_lead", fallbackStartStage: "design_pm", secondaryFallbackStartStage: "publishing_worker" },
-    programmer: { assignedAt: "programmerAssignedAt", endStage: "program_lead", fallbackStartStage: "publishing_pm", secondaryFallbackStartStage: "program_worker" },
+    pm: { startStage: "program_pm", endDateField: "openDate" },
+    designer: { assignedAt: "designerAssignedAt", endStage: "design_pm", fallbackStartStage: "design_worker" },
+    publisher: { assignedAt: "publisherAssignedAt", endStage: "publishing_pm", fallbackStartStage: "design_pm", secondaryFallbackStartStage: "publishing_worker" },
+    programmer: { assignedAt: "programmerAssignedAt", endStage: "program_pm", fallbackStartStage: "publishing_pm", secondaryFallbackStartStage: "program_worker" },
   }[part];
   if (!config) return "";
   const completedEntry = projectCompletionEntryAt(project, config.endStage);
   const endAt = config.endDateField ? project?.[config.endDateField] : completedEntry?.at;
-  if (!endAt) return "";
   const fallbackStart = config.startStage
     ? projectCompletionEntryAt(project, config.startStage)?.at
     : projectCompletionEntryAt(project, config.fallbackStartStage)?.at || projectCompletionEntryAt(project, config.secondaryFallbackStartStage)?.at || "";
   const assignedAt = config.assignedAt ? project?.[config.assignedAt] : "";
-  const startAt = assignedAt || fallbackStart;
-  const days = projectElapsedDays(startAt, endAt);
+  const staffName = part === "pm" ? "" : project?.[part];
+  const scheduleStart = projectStaffScheduleStartAt(project, staffName);
+  const legacyStart = part === "pm" ? "" : project?.contractDate || "";
+  const startAt = assignedAt || scheduleStart || fallbackStart || legacyStart;
+  if (!startAt) return "";
+  const status = String(projectDisplayStatus(project) || "");
+  const isPaused = status.includes("작업대기") || status.includes("중지") || isClosedProject(project);
+  if (!endAt && isPaused) return "";
+  const effectiveEndAt = endAt || todayDate();
+  const days = projectElapsedDays(startAt, effectiveEndAt);
   if (!days) return "";
-  const startLabel = assignedAt ? "배정일" : "시작일";
-  const endLabel = part === "pm" ? "오픈일자" : "팀장 완료일";
-  const title = `${startLabel} ${formatDate(String(startAt).slice(0, 10))} · ${endLabel} ${formatDate(String(endAt).slice(0, 10))}`;
-  return `<span class="staff-duration-badge" title="${escapeAttr(title)}">${days.toLocaleString("ko-KR")}일</span>`;
+  const startLabel = part === "pm" ? "프로그램 완료일" : assignedAt ? "배정일" : scheduleStart ? "첫 일정일" : fallbackStart ? "시작일" : "계약일";
+  const endLabel = endAt ? (part === "pm" ? "오픈일자" : "PM 최종 완료일") : "오늘";
+  const title = `${startLabel} ${formatDate(String(startAt).slice(0, 10))} · ${endLabel} ${formatDate(String(effectiveEndAt).slice(0, 10))}${endAt ? "" : " · 진행 중"}`;
+  const stateClass = endAt ? "is-completed" : "is-in-progress";
+  return `<span class="staff-duration-badge ${stateClass}" title="${escapeAttr(title)}">${days.toLocaleString("ko-KR")}일</span>`;
 }
 
 function projectStaffCell(project, field, part = "") {
   const name = String(project?.[field] || "").trim();
-  const badge = shouldShowStaffDurationBadges() ? projectPartDurationBadge(project, part) : "";
+  const badge = name && shouldShowStaffDurationBadges() ? projectPartDurationBadge(project, part) : "";
   return `<div class="project-staff-cell"><span>${escapeHtml(name || "-")}</span>${badge}</div>`;
 }
 
@@ -2318,6 +2395,21 @@ function applyDashboardMilestoneFilter(milestone) {
   renderRows();
 }
 
+function applyDashboardPmMilestoneFilter(pm, milestone) {
+  selectedMilestoneFilters = milestone ? [milestone] : [];
+  selectedStatusFilters = [];
+  selectedProjectOptionFilters = [];
+  progressStatusFilter = "";
+  milestoneFilter = "";
+  setValue("searchInput", "");
+  setValue("pmFilter", "");
+  closeListFilterMenus();
+  switchView("projects");
+  renderFilters();
+  setValue("pmFilter", pm === "미지정" ? UNASSIGNED_PM_FILTER : pm);
+  renderRows();
+}
+
 function uniqueStaffNames(field) {
   return [
     ...new Set(accessibleProjects().map((project) => String(project[field] || "").trim()).filter(Boolean)),
@@ -2329,10 +2421,13 @@ function renderStaffFilter(id, field, allLabel) {
   if (!select) return;
   const current = select.value;
   const names = uniqueStaffNames(field);
+  const hasUnassignedPm =
+    id === "pmFilter" && accessibleProjects().some((project) => !String(project.pm || "").trim());
   select.innerHTML =
     `<option value="">${escapeHtml(allLabel)}</option>` +
-    names.map((name) => `<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join("");
-  select.value = names.includes(current) ? current : "";
+    names.map((name) => `<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join("") +
+    (hasUnassignedPm ? `<option value="${UNASSIGNED_PM_FILTER}">미지정</option>` : "");
+  select.value = names.includes(current) || (hasUnassignedPm && current === UNASSIGNED_PM_FILTER) ? current : "";
   select.disabled = false;
 }
 
@@ -2356,7 +2451,10 @@ function filteredProjects() {
 
     return (
       (!query || haystack.includes(query)) &&
-      (!pm || String(project.pm || "").trim() === pm) &&
+      (!pm ||
+        (pm === UNASSIGNED_PM_FILTER
+          ? !String(project.pm || "").trim()
+          : String(project.pm || "").trim() === pm)) &&
       (!milestones.length ||
         milestones.includes(milestone) ||
         (milestones.includes("미지정") && !milestone)) &&
@@ -2440,18 +2538,18 @@ function renderFilters() {
 function renderDashboardScheduleItem(entry) {
   const project = findProjectByScheduleInput(entry.projectId);
   const canToggle = canCompleteProjectScheduleEntry(project, entry);
-  return `<article class="dashboard-schedule-item" data-dashboard-schedule-id="${escapeAttr(entry.id)}">
+  return `<article class="dashboard-schedule-item ${canToggle ? "has-check" : "is-readonly"}" data-dashboard-schedule-id="${escapeAttr(entry.id)}">
     ${canToggle ? `<label class="dashboard-schedule-check" title="완료">
       <input class="dashboard-schedule-check-input" type="checkbox" data-dashboard-schedule-complete="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} />
       <span class="dashboard-schedule-check-text">완료</span>
     </label>` : ""}
-    <div class="dashboard-schedule-body">
+    <button class="dashboard-schedule-body" type="button" data-dashboard-schedule-detail="${escapeAttr(entry.id)}">
       <div class="dashboard-schedule-title-row">
         <strong class="dashboard-schedule-name">${escapeHtml(entry.projectName || "-")}</strong>
       </div>
       <p class="dashboard-schedule-meta">${escapeHtml(entry.date || "-")} · ${escapeHtml(entry.milestone || "-")} · ${escapeHtml(scheduleStaffBadgeText(entry))}</p>
       <p class="dashboard-schedule-detail">${escapeHtml(entry.detail || "-")}</p>
-    </div>
+    </button>
   </article>`;
 }
 
@@ -2490,8 +2588,12 @@ function bindDashboardScheduleActions(container) {
       }
     });
   });
-  container.querySelectorAll("[data-dashboard-schedule-id]").forEach((item) => {
-    item.addEventListener("click", () => openProjectDetailFromSchedule(item.dataset.dashboardScheduleId));
+  container.querySelectorAll("[data-dashboard-schedule-detail]").forEach((body) => {
+    body.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const entry = allScheduleEntries().find((item) => item.id === body.dataset.dashboardScheduleDetail);
+      if (entry?.projectId) openProjectDetailOnScheduleView(entry.projectId);
+    });
   });
 }
 
@@ -2502,21 +2604,29 @@ function renderDashboardSchedules() {
   const entries = scheduleEntriesWithDemo()
     .filter((entry) => !entry.completed)
     .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+  const incompleteEntries = entries.filter((entry) => String(entry.date || "") < today);
   const todayEntries = entries.filter((entry) => entry.date === today);
-  const weekEntries = entries.filter((entry) => String(entry.date || "") >= weekStart && String(entry.date || "") <= weekEnd);
+  const remainingWeekEntries = entries.filter((entry) => String(entry.date || "") > today && String(entry.date || "") <= weekEnd);
+  setText("dashboardIncompleteScheduleDate", `${today} 이전`);
+  setText("dashboardIncompleteScheduleCount", incompleteEntries.length.toLocaleString("ko-KR"));
   setText("dashboardTodayScheduleDate", today);
   setText("dashboardTodayScheduleCount", todayEntries.length.toLocaleString("ko-KR"));
-  setText("dashboardWeekScheduleRange", `${weekStart} ~ ${weekEnd}`);
-  setText("dashboardWeekScheduleCount", weekEntries.length.toLocaleString("ko-KR"));
+  setText("dashboardRemainingWeekScheduleRange", `${addDays(today, 1)} ~ ${weekEnd}`);
+  setText("dashboardRemainingWeekScheduleCount", remainingWeekEntries.length.toLocaleString("ko-KR"));
+  const incompleteBox = $("dashboardIncompleteSchedules");
+  if (incompleteBox) {
+    incompleteBox.innerHTML = incompleteEntries.length ? incompleteEntries.map(renderDashboardScheduleItem).join("") : '<p class="empty">미완료 일정이 없습니다.</p>';
+    bindDashboardScheduleActions(incompleteBox);
+  }
   const todayBox = $("dashboardTodaySchedules");
   if (todayBox) {
     todayBox.innerHTML = todayEntries.length ? todayEntries.map(renderDashboardScheduleItem).join("") : '<p class="empty">오늘 확인할 일정이 없습니다.</p>';
     bindDashboardScheduleActions(todayBox);
   }
-  const weekBox = $("dashboardWeekSchedules");
-  if (weekBox) {
-    weekBox.innerHTML = weekEntries.length ? weekEntries.map(renderDashboardScheduleItem).join("") : '<p class="empty">이번 주 확인할 일정이 없습니다.</p>';
-    bindDashboardScheduleActions(weekBox);
+  const remainingWeekBox = $("dashboardRemainingWeekSchedules");
+  if (remainingWeekBox) {
+    remainingWeekBox.innerHTML = remainingWeekEntries.length ? remainingWeekEntries.map(renderDashboardScheduleItem).join("") : '<p class="empty">이번 주 남은 일정이 없습니다.</p>';
+    bindDashboardScheduleActions(remainingWeekBox);
   }
 }
 
@@ -2524,19 +2634,269 @@ function renderDashboardSchedules() {
 function renderDashboard() {
   const visible = accessibleProjects();
   const progressRows = progressProjects();
+  const scheduleOnly = isScheduleOnlyDashboardUser();
+  document.querySelector(".dashboard-action-grid")?.toggleAttribute("hidden", scheduleOnly);
+  const canViewManagement = canViewManagementDashboard();
+  document.querySelectorAll("[data-dashboard-management]").forEach((element) => {
+    element.hidden = !canViewManagement;
+  });
+  const canViewQueue = isAdmin() || isDashboardTeamLead() || isDepartment("pm");
+  document.querySelectorAll("[data-dashboard-queue]").forEach((element) => {
+    element.hidden = !canViewQueue;
+  });
+  const isPmTeamLead = isDashboardTeamLead() && isDepartment("pm");
+  document.querySelector('[data-dashboard-alert="assignment"]')?.toggleAttribute("hidden", isDepartment("pm") && !isPmTeamLead);
+  const isNonPmTeamLead = isDashboardTeamLead() && !isDepartment("pm");
+  document.querySelector(".dashboard-action-grid")?.classList.toggle("is-three-cards", (isDepartment("pm") && !isPmTeamLead) || isNonPmTeamLead);
+  document.querySelectorAll("[data-dashboard-money]").forEach((element) => {
+    element.hidden = isNonPmTeamLead;
+  });
   const issueProjectCount = visible.filter((project) => project.hasIssue && !isClosedProject(project)).length;
-  $("activeCount").textContent = visible.length.toLocaleString("ko-KR");
-  $("feedbackCount").textContent = progressRows.length.toLocaleString("ko-KR");
-  $("monthlyCount").textContent = visible.filter((project) => project.monthlyCollection).length.toLocaleString("ko-KR");
-  $("issueCount").textContent = issueProjectCount.toLocaleString("ko-KR");
+  setText("activeCount", visible.length.toLocaleString("ko-KR"));
+  setText("feedbackCount", progressRows.length.toLocaleString("ko-KR"));
+  setText("monthlyCount", visible.filter((project) => project.monthlyCollection).length.toLocaleString("ko-KR"));
+  setText("issueCount", issueProjectCount.toLocaleString("ko-KR"));
   const metricsGrid = $("statusChart")?.closest(".dashboard-grid");
   const canViewMetrics = canViewDashboardProjectMetrics();
-  if (metricsGrid) metricsGrid.style.display = canViewMetrics ? "" : "none";
-  if (canViewMetrics) {
+  if (metricsGrid) metricsGrid.hidden = scheduleOnly || !canViewMetrics;
+  if (canViewMetrics && !scheduleOnly) {
     renderStatusChart(progressRows);
     renderStatusSummary(progressRows);
   }
   renderDashboardSchedules();
+  renderDashboardAlerts(progressRows);
+}
+
+function renderDashboardAlerts(progressRows) {
+  const completionRows = currentUser ? projectCompletionRowsForCurrentUser() : [];
+  const riskRows = progressRows.filter(dashboardRiskProject);
+  const assignmentRows = currentUser && (isAdmin() || isDashboardTeamLead())
+    ? projectAssignmentSource().filter(hasProjectNo).filter((project) => !isInactiveProgressMilestone(projectMilestone(project))).filter(projectAssignmentPending)
+    : [];
+  const moneyRows = progressRows.filter(dashboardNeedsMoneyOrOpenCheck);
+
+  setText("dashboardCompletionPendingCount", completionRows.length.toLocaleString("ko-KR"));
+  setText("dashboardRiskProjectCount", riskRows.length.toLocaleString("ko-KR"));
+  setText("dashboardAssignmentPendingCount", assignmentRows.length.toLocaleString("ko-KR"));
+  setText("dashboardMoneyCheckCount", moneyRows.length.toLocaleString("ko-KR"));
+  setText("dashboardCompletionPendingText", dashboardAlertSummary(completionRows, "완료 승인 대기", "확인할 완료 승인 건이 없습니다."));
+  setText("dashboardAssignmentPendingText", dashboardAlertSummary(assignmentRows, "담당자 배정 대기", "배정 대기 프로젝트가 없습니다."));
+  setText("dashboardMoneyCheckText", dashboardAlertSummary(moneyRows, "수금/오픈 확인 필요", "확인할 수금/오픈 건이 없습니다."));
+  renderDashboardFocusLists({ completionRows, riskRows, assignmentRows, moneyRows });
+
+  bindDashboardAlertCard("completion", completionRows.length > 0 && canViewProjectCompletionApproval(), () => switchView("projectCompletionApproval"));
+  bindDashboardAlertCard("risk", riskRows.length > 0, () => {
+    if (canViewIssues()) switchView("issues");
+    else switchView("projects");
+  });
+  bindDashboardAlertCard("assignment", assignmentRows.length > 0 && (isAdmin() || isDashboardTeamLead()), () => switchView("projectAssignment"));
+  bindDashboardAlertCard("money", moneyRows.length > 0 && !(isDashboardTeamLead() && !isDepartment("pm")), () => {
+    if (canViewMonthlyProjects()) switchView("monthly");
+    else switchView("projects");
+  });
+  bindDashboardShortcutButton("risk", riskRows.length > 0, () => {
+    if (canViewIssues()) switchView("issues");
+    else switchView("projects");
+  });
+  bindDashboardShortcutButton("queue", completionRows.length + assignmentRows.length + moneyRows.length > 0, () => {
+    if (completionRows.length && canViewProjectCompletionApproval()) {
+      switchView("projectCompletionApproval");
+      return;
+    }
+    if (assignmentRows.length && (isAdmin() || isDashboardTeamLead())) {
+      switchView("projectAssignment");
+      return;
+    }
+    if (moneyRows.length && canViewMonthlyProjects()) {
+      switchView("monthly");
+      return;
+    }
+    switchView("projects");
+  });
+}
+
+function dashboardRiskProject(project) {
+  if (!project || isClosedProject(project)) return false;
+  return Boolean(dueDateStatus(project) || project.hasIssue);
+}
+
+function dashboardNeedsMoneyOrOpenCheck(project) {
+  const status = String(projectDisplayStatus(project) || "").trim();
+  const milestone = String(projectMilestone(project) || "").trim();
+  return Boolean(
+    project.monthlyCollection ||
+      status.includes("입금") ||
+      status.includes("오픈") ||
+      (milestone.includes("오픈") && !String(project.openDate || "").trim())
+  );
+}
+
+function renderDashboardFocusLists({ completionRows, riskRows, assignmentRows, moneyRows }) {
+  const isNonPmTeamLead = isDashboardTeamLead() && !isDepartment("pm");
+  const uniqueRiskCount = new Set(riskRows.map((project) => project.id)).size;
+  setText("dashboardRiskUniqueCount", `총 ${uniqueRiskCount.toLocaleString("ko-KR")}건`);
+  const uniqueQueueCount = new Set(
+    [...completionRows, ...(isDepartment("pm") ? [] : assignmentRows), ...(isNonPmTeamLead ? [] : moneyRows)].map((project) => project.id)
+  ).size;
+  setText("dashboardQueueUniqueCount", `총 ${uniqueQueueCount.toLocaleString("ko-KR")}건`);
+  const renderGroup = (title, rows, labels, shortcut, showIssueDetails = false) => `<section class="dashboard-focus-group" data-dashboard-queue-type="${shortcut}">
+    <div class="dashboard-group-head">
+      <h3>${escapeHtml(title)}</h3>
+      <span class="dashboard-group-count">총 ${rows.length.toLocaleString("ko-KR")}건</span>
+      <button class="ghost-btn table-action dashboard-shortcut-btn" type="button" data-dashboard-shortcut="${shortcut}" aria-label="${escapeAttr(title)} 바로가기">바로가기</button>
+    </div>
+    <div class="dashboard-focus-list">${rows.length
+      ? rows.map((project) => renderDashboardProjectItem(project, labels(project), showIssueDetails)).join("")
+      : '<p class="empty">해당 프로젝트가 없습니다.</p>'}</div>
+  </section>`;
+  const riskList = $("dashboardRiskList");
+  if (riskList) {
+    const rows = [...riskRows].sort(compareDashboardRiskRows);
+    riskList.innerHTML = [
+      renderGroup("납기지연", rows.filter((project) => dueDateStatus(project)?.label === "지연"), dashboardRiskReasons, "delayed"),
+      renderGroup("납기임박", rows.filter((project) => dueDateStatus(project)?.label === "주의"), dashboardRiskReasons, "upcoming"),
+      renderGroup("이슈", rows.filter((project) => project.hasIssue), dashboardRiskReasons, "issue", true),
+    ].join("");
+  }
+
+  const queueList = $("dashboardQueueList");
+  if (queueList) {
+    queueList.innerHTML = [
+      renderGroup("완료 승인", completionRows, () => ["완료 승인"], "completion"),
+      renderGroup("담당자 배정", assignmentRows, () => ["담당자 배정"], "assignment"),
+      renderGroup("수금/오픈 체크", moneyRows, dashboardMoneyReasons, "money"),
+    ].join("");
+    const assignmentGroup = queueList.querySelector('[data-dashboard-queue-type="assignment"]');
+    if (assignmentGroup) assignmentGroup.hidden = isDepartment("pm") && !isDashboardTeamLead();
+    const moneyGroup = queueList.querySelector('[data-dashboard-queue-type="money"]');
+    if (moneyGroup) moneyGroup.hidden = isNonPmTeamLead;
+  }
+
+  ["delayed", "upcoming", "issue"].forEach((type) => {
+    bindDashboardShortcutButton(type, canViewIssues(), () => {
+      setValue("managementDueFilter", type === "issue" ? "" : type);
+      setValue("managementIssueFilter", type === "issue" ? "yes" : "");
+      setValue("managementSearchInput", "");
+      switchView("issues");
+      renderIssueProjectRows();
+    });
+  });
+  bindDashboardShortcutButton("completion", canViewProjectCompletionApproval(), () => switchView("projectCompletionApproval"));
+  bindDashboardShortcutButton("assignment", isAdmin() || isDashboardTeamLead(), () => switchView("projectAssignment"));
+  bindDashboardShortcutButton("money", canViewMonthlyProjects(), () => switchView("monthly"));
+}
+
+function renderDashboardProjectItem(project, labels = [], showIssueDetails = false) {
+  const dueLabel = dashboardDueLabel(project);
+  const badges = [
+    dueLabel,
+    project.isUrgent ? { label: "급건", className: "is-urgent" } : null,
+    project.hasIssue ? { label: "이슈", className: "is-issue" } : null,
+  ].filter(Boolean);
+  const latestIssue = showIssueDetails ? latestProjectIssue(project) : null;
+  const metaText = [project.pm || "PM 미배정", projectMilestone(project) || "마일스톤 미지정", projectDisplayStatus(project) || "상태 미지정"].join(" · ");
+  const issueMeta = latestIssue
+    ? `<time>${escapeHtml(formatDetailActivityDateTime(latestIssue.createdAt || latestIssue.date, latestIssue.date))}</time>`
+    : "";
+  const issueSummary = latestIssue
+    ? `<span class="dashboard-focus-issue">${escapeHtml(latestIssue.memo || "내용 없음")}</span>`
+    : "";
+  return `<button class="dashboard-focus-item" type="button" data-dashboard-project-id="${escapeAttr(project.id)}">
+    <span class="dashboard-focus-title">
+      <strong>#${escapeHtml(project.projectNo || "-")}</strong>
+      <span>${escapeHtml(project.name || "이름 없음")}</span>
+      ${badges.map((badge) => `<i class="dashboard-due-badge ${badge.className}">${escapeHtml(badge.label)}</i>`).join("")}
+    </span>
+    <span class="dashboard-focus-meta">
+      <span>${escapeHtml(metaText)}</span>
+      ${issueMeta}
+    </span>
+    ${issueSummary}
+  </button>`;
+}
+
+function dashboardDueLabel(project) {
+  const due = dueDateStatus(project);
+  if (due?.label === "지연") return { label: "납기 지연", className: "is-delayed" };
+  if (due?.label === "주의") return { label: "납기 임박", className: "is-warning" };
+  return null;
+}
+
+function dashboardRiskReasons(project) {
+  const reasons = [];
+  const due = dueDateStatus(project);
+  if (due?.label) reasons.push(due.label === "지연" ? "납기 지연" : "납기 임박");
+  if (project.hasIssue) reasons.push("이슈");
+  const status = String(projectDisplayStatus(project) || "");
+  if (status.includes("입금지연")) reasons.push("입금 지연");
+  if (status.includes("오픈지연")) reasons.push("오픈 지연");
+  return reasons.length ? reasons : ["확인 필요"];
+}
+
+function dashboardMoneyReasons(project) {
+  const reasons = [];
+  const status = String(projectDisplayStatus(project) || "");
+  const milestone = String(projectMilestone(project) || "");
+  if (project.monthlyCollection) reasons.push("당월수금");
+  if (status.includes("입금")) reasons.push(status);
+  if (status.includes("오픈")) reasons.push(status);
+  if (milestone.includes("오픈") && !String(project.openDate || "").trim()) reasons.push("오픈일 미입력");
+  return reasons.length ? reasons : ["수금/오픈 확인"];
+}
+
+function compareDashboardRiskRows(a, b) {
+  const aDue = dueDateStatus(a);
+  const bDue = dueDateStatus(b);
+  const weight = (status) => (status?.label === "지연" ? 0 : status?.label === "주의" ? 1 : 2);
+  const riskWeight = weight(aDue) - weight(bDue);
+  if (riskWeight !== 0) return riskWeight;
+  return String(a.dueDate || "9999-12-31").localeCompare(String(b.dueDate || "9999-12-31"));
+}
+
+function openDashboardProject(projectId) {
+  const project = findProjectById(projectId);
+  if (!project) return;
+  selectedId = project.id;
+  cancelCreateProject();
+  document.body.classList.remove("schedule-detail-open");
+  document.body.classList.add("detail-open");
+  closeDetailDropdowns();
+  renderDetail();
+  saveUiSessionState();
+}
+
+function dashboardAlertSummary(rows, suffix, emptyText) {
+  if (!rows.length) return emptyText;
+  const names = rows.slice(0, 2).map((project) => `${project.projectNo || "-"} ${project.name || "이름 없음"}`);
+  const more = rows.length > 2 ? ` 외 ${rows.length - 2}건` : "";
+  return `${names.join(", ")}${more} ${suffix}`;
+}
+
+function bindDashboardAlertCard(type, enabled, handler) {
+  const card = document.querySelector(`[data-dashboard-alert="${type}"]`);
+  if (!card) return;
+  card.classList.toggle("is-disabled", !enabled);
+  card.onclick = enabled ? handler : null;
+  card.onkeydown = enabled
+    ? (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          handler();
+        }
+      }
+    : null;
+}
+
+function bindDashboardShortcutButton(type, enabled, handler) {
+  const button = document.querySelector(`[data-dashboard-shortcut="${type}"]`);
+  if (!button) return;
+  button.disabled = !enabled;
+  button.onclick = enabled
+    ? (event) => {
+        event.stopPropagation();
+        handler();
+      }
+    : null;
 }
 
 function progressMilestoneColumns(rows) {
@@ -2565,65 +2925,190 @@ function renderStatusChart(rows) {
     return;
   }
 
-  const milestones = dashboardVisibleMilestones();
-  const colors = ["#ffd767", "#95c77f", "#7bb6f6", "#f59e9e", "#b7a4f6", "#70d6c7", "#f6a96b", "#a3a3a3", "#f472b6", "#38bdf8"];
-  const pmNames = [...new Set(rows.map((project) => String(project.pm || "").trim()).filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b, "ko")
-  );
-  const staffGroups = pmNames.map((name, index) => ({ name, color: colors[index % colors.length] }));
-  if (rows.some((project) => !String(project.pm || "").trim())) {
-    staffGroups.push({ name: "미지정", color: colors[staffGroups.length % colors.length] });
-  }
+  const milestones = progressMilestoneColumns(rows);
+  const pmNames = dashboardPmNames(rows);
 
-  if (!staffGroups.length) {
+  if (!pmNames.length) {
     chart.innerHTML = '<div class="admin-lock"><strong>표시할 PM이 없습니다.</strong></div>';
     return;
   }
 
-  const chartData = milestones.map((milestone) => ({
-    milestone,
-    values: staffGroups.map((group) =>
-      rows.filter((project) => {
-        const pm = String(project.pm || "").trim() || "미지정";
-        return projectMilestone(project) === milestone && pm === group.name;
-      }).length
-    ),
-  }));
-
-  const maxValue = Math.max(0, ...chartData.flatMap((item) => item.values));
-  const yMax = Math.max(5, Math.ceil(maxValue / 5) * 5);
-  const yTicks = [yMax, Math.round((yMax * 2) / 3), Math.round(yMax / 3), 0];
-  const barWidth = staffGroups.length > 5 ? 8 : staffGroups.length > 3 ? 10 : 14;
+  const pmSummaries = pmNames.map((name) => dashboardPmSummary(rows, name));
+  const matrixRows = milestones.map((milestone) => {
+    const values = pmNames.map((name) => dashboardPmMilestoneCount(rows, name, milestone));
+    return {
+      milestone,
+      values,
+      total: values.reduce((sum, value) => sum + value, 0),
+    };
+  });
+  const summaryTotals = pmSummaries.reduce(
+    (totals, item) => ({
+      total: totals.total + item.total,
+      issue: totals.issue + item.issue,
+      monthly: totals.monthly + item.monthly,
+      delayed: totals.delayed + item.delayed,
+      completionWaiting: totals.completionWaiting + item.completionWaiting,
+    }),
+    { total: 0, issue: 0, monthly: 0, delayed: 0, completionWaiting: 0 }
+  );
+  const matrixTotals = pmNames.map((_, index) =>
+    matrixRows.reduce((sum, row) => sum + row.values[index], 0)
+  );
+  const matrixGrandTotal = matrixTotals.reduce((sum, value) => sum + value, 0);
+  const maxValue = Math.max(1, ...matrixRows.flatMap((item) => item.values), ...matrixRows.map((item) => item.total));
 
   chart.innerHTML = `
-    <div class="chart-legend">
-      ${staffGroups.map((group) => `<span><i style="background:${group.color}"></i>${escapeHtml(group.name)}</span>`).join("")}
-    </div>
-    <div class="chart-area">
-      <div class="y-axis">
-        ${yTicks.map((tick) => `<span>${tick}</span>`).join("")}
-      </div>
-      <div class="bars" style="grid-template-columns: repeat(${milestones.length}, minmax(74px, 1fr));">
-        ${chartData
-          .map(
-            (item) => `
-              <div class="bar-group">
-                <div class="bar-pair">
-                  ${item.values
-                    .map((value, index) => {
-                      const height = value ? Math.max(10, Math.round((value / yMax) * 170)) : 2;
-                      return `<div class="bar" style="height:${height}px;width:${barWidth}px;background:${staffGroups[index].color}" title="${escapeAttr(staffGroups[index].name)}: ${value}"><span class="bar-value">${value}</span></div>`;
-                    })
-                    .join("")}
-                </div>
-                <div class="bar-label">${escapeHtml(item.milestone)}</div>
-              </div>
-            `
-          )
-          .join("")}
-      </div>
+    <div class="dashboard-integrated-grid">
+      <section class="dashboard-data-card">
+        <div class="dashboard-data-head">
+          <div>
+            <h2>PM별 요약</h2>
+            <p>진행/이슈/수금/지연/완료대기 기준</p>
+          </div>
+        </div>
+        <div class="dashboard-table-wrap">
+          <table class="dashboard-summary-table">
+            <thead>
+              <tr>
+                <th>PM</th>
+                <th>진행</th>
+                <th>이슈</th>
+                <th>당월수금</th>
+                <th>지연</th>
+                <th>완료대기</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${pmSummaries
+                .map(
+                  (item) => `<tr>
+                    <th>${escapeHtml(item.name)}</th>
+                    <td><strong>${item.total}</strong></td>
+                    <td class="${item.issue ? "is-warn" : ""}">${item.issue}</td>
+                    <td>${item.monthly}</td>
+                    <td class="${item.delayed ? "is-danger" : ""}">${item.delayed}</td>
+                    <td class="${item.completionWaiting ? "is-accent" : ""}">${item.completionWaiting}</td>
+                  </tr>`
+                )
+                .join("")}
+              <tr class="is-total-row">
+                <th>합계</th>
+                <td><strong>${summaryTotals.total}</strong></td>
+                <td class="${summaryTotals.issue ? "is-warn" : ""}">${summaryTotals.issue}</td>
+                <td>${summaryTotals.monthly}</td>
+                <td class="${summaryTotals.delayed ? "is-danger" : ""}">${summaryTotals.delayed}</td>
+                <td class="${summaryTotals.completionWaiting ? "is-accent" : ""}">${summaryTotals.completionWaiting}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section class="dashboard-data-card">
+        <div class="dashboard-data-head">
+          <div>
+            <h2>마일스톤 분포</h2>
+            <p>PM별 공정 밀도를 색 농도로 표시합니다.</p>
+          </div>
+          <div class="heatmap-legend" aria-hidden="true">
+            <span>낮음</span><i></i><i class="is-mid"></i><i class="is-high"></i><span>높음</span>
+          </div>
+        </div>
+        <div class="dashboard-table-wrap pm-matrix-wrap">
+          <table class="pm-matrix-table">
+            <thead>
+              <tr>
+                <th>마일스톤</th>
+                ${pmNames.map((name) => `<th>${escapeHtml(name)}</th>`).join("")}
+                <th class="is-total">합계</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${matrixRows
+                .map(
+                  (row) => `<tr>
+                    <th>${escapeHtml(row.milestone)}</th>
+                    ${row.values
+                      .map((value, index) => {
+                        const pm = pmNames[index];
+                        if (!value) {
+                          return `<td class="is-zero" style="${dashboardHeatmapStyle(value, maxValue)}">${value}</td>`;
+                        }
+                        return `<td class="is-clickable" style="${dashboardHeatmapStyle(value, maxValue)}" data-dashboard-pm="${escapeAttr(pm)}" data-dashboard-milestone="${escapeAttr(row.milestone)}" role="button" tabindex="0" aria-label="${escapeAttr(`${pm} ${row.milestone} 프로젝트 ${value}건 보기`)}">${value}</td>`;
+                      })
+                      .join("")}
+                    <td class="is-total">${row.total}</td>
+                  </tr>`
+                )
+                .join("")}
+              <tr class="is-total-row">
+                <th>합계</th>
+                ${matrixTotals.map((value) => `<td class="is-total">${value}</td>`).join("")}
+                <td class="is-total">${matrixGrandTotal}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   `;
+
+  chart.querySelectorAll("[data-dashboard-pm][data-dashboard-milestone]").forEach((cell) => {
+    const openFilteredProjects = () =>
+      applyDashboardPmMilestoneFilter(cell.dataset.dashboardPm, cell.dataset.dashboardMilestone);
+    cell.addEventListener("click", openFilteredProjects);
+    cell.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openFilteredProjects();
+    });
+  });
+}
+
+function dashboardPmNames(rows) {
+  const names = [...new Set(rows.map((project) => String(project.pm || "").trim()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, "ko")
+  );
+  if (rows.some((project) => !String(project.pm || "").trim())) names.push("미지정");
+  return names;
+}
+
+function dashboardProjectPm(project) {
+  return String(project?.pm || "").trim() || "미지정";
+}
+
+function dashboardPmSummary(rows, name) {
+  const targets = rows.filter((project) => dashboardProjectPm(project) === name);
+  return {
+    name,
+    total: targets.length,
+    issue: targets.filter((project) => project.hasIssue).length,
+    monthly: targets.filter((project) => project.monthlyCollection).length,
+    delayed: targets.filter((project) => dueDateStatus(project)?.label === "지연").length,
+    completionWaiting: targets.filter((project) => dashboardHasCompletionWaiting(project)).length,
+  };
+}
+
+function dashboardHasCompletionWaiting(project) {
+  const flow = normalizeProjectCompletionFlow(project?.completionFlow);
+  if (flow.hideApproval) return false;
+  const stage = projectCompletionStage(project);
+  return Boolean(stage && stage.actor !== "worker");
+}
+
+function dashboardPmMilestoneCount(rows, name, milestone) {
+  return rows.filter((project) => {
+    const value = projectMilestone(project);
+    const projectMilestoneName = milestone === "미지정" ? !value : value === milestone;
+    return dashboardProjectPm(project) === name && projectMilestoneName;
+  }).length;
+}
+
+function dashboardHeatmapStyle(value, maxValue) {
+  if (!value) return "";
+  const ratio = Math.max(0.18, Math.min(1, value / Math.max(1, maxValue)));
+  const alpha = (0.16 + ratio * 0.58).toFixed(2);
+  return `background: rgba(47, 133, 108, ${alpha}); color: ${ratio > 0.62 ? "#fff" : "#0f3f33"};`;
 }
 
 function renderStatusSummary(rows) {
@@ -2696,7 +3181,8 @@ function dueDateStatus(project) {
 function buildDueDateBadge(project) {
   const status = dueDateStatus(project);
   if (!status) return "";
-  return `<span class="${status.className}" title="납기일 ${escapeAttr(formatDate(project.dueDate))}">${escapeHtml(status.label)}</span>`;
+  const label = status.label === "주의" ? "임박" : status.label;
+  return `<span class="${status.className}" title="납기일 ${escapeAttr(formatDate(project.dueDate))}">${escapeHtml(label)}</span>`;
 }
 
 function projectNoSortValue(project) {
@@ -2751,6 +3237,9 @@ function buildProjectFlagIcons(project) {
   }
   if (project.monthlyCollection) {
     flags.push(`<span class="flag-text-btn flag-money" title="당월수금">당월수금</span>`);
+  }
+  if (project.isUrgent) {
+    flags.push(`<span class="flag-text-btn flag-urgent" title="급건">급건</span>`);
   }
   if (project.hasIssue) {
     flags.push(`<span class="flag-text-btn flag-issue" title="이슈">이슈</span>`);
@@ -3039,7 +3528,8 @@ function isMonthlyCollectionVisible(project, viewDate = new Date()) {
 }
 
 function monthlyIssueProjectSource() {
-  return canViewMonthlyAndIssues() ? projects : [];
+  const canView = currentView === "issues" ? canViewIssues() : canViewMonthlyProjects();
+  return canView ? projects : [];
 }
 
 function monthlyProjects() {
@@ -3127,7 +3617,7 @@ function renderMonthlyRows() {
 }
 
 function closeDetailDropdowns() {
-  document.querySelectorAll(".detail-dropdown").forEach((dropdown) => {
+  document.querySelectorAll(".detail-dropdown:not(.activity-dropdown)").forEach((dropdown) => {
     dropdown.removeAttribute("open");
   });
 }
@@ -3165,6 +3655,7 @@ function updateDetailFilledState() {
 }
 
 function updateDetailHeaderChecks() {
+  $("urgentCheckLabel")?.classList.toggle("is-active", checkedOf("isUrgent"));
   $("issueCheckLabel")?.classList.toggle("is-active", checkedOf("hasIssue"));
   $("monthlyCollectionLabel")?.classList.toggle("is-active", checkedOf("monthlyCollection"));
 }
@@ -3350,6 +3841,7 @@ function renderDetail() {
   const project = selectedProject();
   if (!project) return;
   if (!isCreatingProject) selectedId = project.id;
+  setText("closeDetail", "닫기");
   setText("detailHeading", project.name || (isCreatingProject ? "신규 프로젝트" : "프로젝트 상세"));
   setText(
     "saveState",
@@ -3372,10 +3864,12 @@ function renderDetail() {
   });
   setChecked("hasForeignLanguage", project.hasForeignLanguage);
   setChecked("monthlyCollection", project.monthlyCollection);
+  setChecked("isUrgent", project.isUrgent);
   setChecked("hasIssue", project.hasIssue);
   document.querySelectorAll('[name="hasLanding"]').forEach((radio) => {
     radio.checked = radio.value === (project.hasLanding ? "landing" : "normal");
   });
+  $("urgentCheckLabel")?.classList.toggle("is-active", Boolean(project.isUrgent));
   $("issueCheckLabel")?.classList.toggle("is-active", Boolean(project.hasIssue));
   $("monthlyCollectionLabel")?.classList.toggle("is-active", Boolean(project.monthlyCollection));
 
@@ -3404,6 +3898,7 @@ function renderDetail() {
     $("designAction").setAttribute("aria-label", hasDesign ? "화면설계" : "화면설계 URL 등록");
   }
   $("deleteProject")?.classList.toggle("hidden", !isAdmin() || isCreatingProject);
+  $("projectLibraryAction")?.classList.toggle("hidden", isCreatingProject || !currentUser);
 
   if (editingIssueId && !(project.issues || []).some((issue) => issue.id === editingIssueId)) editingIssueId = "";
   if (editingContactId && !(project.clientContacts || []).some((contact) => contact.id === editingContactId)) editingContactId = "";
@@ -3507,7 +4002,7 @@ function renderIssues(project) {
             <div class="entry-card-head issue-view-head">
               <div class="issue-head-main entry-card-head-main issue-meta-row">
                 <span class="issue-author">${escapeHtml(entryAuthorName(issue))}</span>
-                <span class="issue-date">${escapeHtml(formatDate(issue.date))}</span>
+                <span class="issue-date">${escapeHtml(formatDetailActivityDateTime(issue.createdAt || issue.date, issue.date))}</span>
                 ${visibility === "private" ? '<span class="issue-visibility-badge">숨김</span>' : ""}
                 ${issue.status ? `<span class="issue-status-badge">${escapeHtml(issue.status)}</span>` : ""}
                 ${issue.type ? `<span class="issue-type-badge">${escapeHtml(issue.type)}</span>` : ""}
@@ -3684,6 +4179,7 @@ function applyDetailFormToProject(project) {
   project.hostingType = document.querySelector('[name="hostingType"]:checked')?.value || "일반 웹호스팅";
   project.hasForeignLanguage = checkedOf("hasForeignLanguage");
   project.monthlyCollection = checkedOf("monthlyCollection");
+  project.isUrgent = checkedOf("isUrgent");
   project.hasIssue = checkedOf("hasIssue");
   const selectedLandingType = document.querySelector('[name="hasLanding"]:checked')?.value;
   project.hasLanding = selectedLandingType ? selectedLandingType === "landing" : checkedOf("hasLanding");
@@ -3955,7 +4451,7 @@ function renderProjectWorkStack(project) {
           <div class="communication-view ${isEditing ? "hidden" : ""}">
             <div class="entry-card-head">
               <div class="project-work-stack-head entry-card-head-main">
-                <span class="project-schedule-date">${escapeHtml(entry.at || "-")}</span>
+                <span class="project-schedule-date">${escapeHtml(formatDetailActivityDateTime(entry.at || ""))}</span>
                 <span class="schedule-staff-badge ${rejected ? "is-rejected" : ""}"${badgeStyle}>${escapeHtml(displayText)}</span>
                 ${memoText ? `<span class="project-work-stack-memo-text">${escapeHtml(memoText)}</span>` : ""}
                 ${reasonText ? `<span class="project-work-stack-reason ${rejected ? "is-rejected" : ""}">${escapeHtml(reasonText)}</span>` : ""}
@@ -4058,13 +4554,14 @@ function renderCommunications(project) {
   list.innerHTML = entries
     .map((entry) => {
       const isEditing = entry.id === editingCommunicationId;
-      const dateText = entry.date || todayDate();
+      const dateText = String(entry.date || entry.createdAt || todayDate()).slice(0, 10);
+      const displayDateText = formatDetailActivityDateTime(entry.createdAt || entry.date, entry.date);
       const memoText = entry.memo || "";
       const canEditCommunicationEntry = canEditOwnEntry(entry, canEditProjectCommunications());
       return `
         <article class="communication-card" data-communication-id="${entry.id}">
           <div class="communication-view ${isEditing ? "hidden" : ""}">
-            <p class="entry-meta">${escapeHtml(entryAuthorName(entry))} ${escapeHtml(dateText)}</p>
+            <p class="entry-meta">${escapeHtml(entryAuthorName(entry))} ${escapeHtml(displayDateText)}</p>
             <p class="issue-text">${escapeHtml(memoText || "내용 없음")}</p>
             <div class="issue-actions">
               <button class="ghost-btn communication-edit ${canEditCommunicationEntry ? "" : "hidden"}" type="button">수정</button>
@@ -4125,6 +4622,7 @@ function renderCommunications(project) {
     card.querySelector(".communication-save").addEventListener("click", async () => {
       if (!canEditOwnEntry(entry, canEditProjectCommunications())) return;
       entry.date = dateInput.value || todayDate();
+      if (!entry.createdAt) entry.createdAt = new Date().toISOString();
       entry.memo = memoInput.value.trim();
       editingCommunicationId = "";
       await persistEntry();
@@ -4251,6 +4749,7 @@ function addCommunication() {
   project.communications.unshift({
     id,
     date: todayDate(),
+    createdAt: new Date().toISOString(),
     memo: "",
     createdById: assignedProjectUserId(),
     createdByName: assignedProjectUserName(),
@@ -4511,11 +5010,15 @@ function downloadProjectsExcel() {
 function openLogin() {
   setText("loginMessage", "");
   if (!currentUser) {
-    setValue("loginId", "");
-    setValue("loginPassword", "");
+    fillPortfolioLogin(false);
   }
   const dialog = $("loginDialog");
   if (dialog && !dialog.open) dialog.showModal();
+}
+
+function fillPortfolioLogin(force = true) {
+  if (force || !valueOf("loginId").trim()) setValue("loginId", "jhchoi");
+  if (force || !valueOf("loginPassword").trim()) setValue("loginPassword", "test1234!!");
 }
 
 function applyLoginGate() {
@@ -4525,6 +5028,7 @@ function applyLoginGate() {
   const dialog = $("loginDialog");
   if (locked) {
     setText("loginMessage", "");
+    fillPortfolioLogin(false);
     if (dialog && !dialog.open) dialog.showModal();
     return;
   }
@@ -4830,6 +5334,7 @@ function employmentStatusLabel(status) {
 function closeDetail() {
   cancelCreateProject();
   document.body.classList.remove("detail-open", "schedule-detail-open");
+  setText("closeDetail", "닫기");
   renderAll(false);
   saveUiSessionState();
 }
@@ -5937,7 +6442,25 @@ async function deleteCompanyHoliday() {
 
 
 function issueProjects() {
-  return monthlyIssueProjectSource().filter((project) => project.hasIssue && !isClosedProject(project));
+  return monthlyIssueProjectSource().filter((project) =>
+    !isInactiveProgressMilestone(projectMilestone(project)) && dashboardRiskProject(project)
+  );
+}
+
+function filteredManagementProjects() {
+  const dueFilter = valueOf("managementDueFilter");
+  const issueFilter = valueOf("managementIssueFilter");
+  const query = valueOf("managementSearchInput").trim().toLowerCase();
+  return issueProjects().filter((project) => {
+    const due = dueDateStatus(project);
+    if (dueFilter === "delayed" && due?.label !== "지연") return false;
+    if (dueFilter === "upcoming" && due?.label !== "주의") return false;
+    if (issueFilter === "yes" && !project.hasIssue) return false;
+    if (issueFilter === "no" && project.hasIssue) return false;
+    return !query || [project.name, project.projectNo].some((value) =>
+      String(value || "").toLowerCase().includes(query)
+    );
+  });
 }
 
 function latestIssueText(project) {
@@ -5950,7 +6473,7 @@ function renderIssueProjectSummary(rows = issueProjects()) {
   const progress = rows.filter((project) => !isInactiveProgressMilestone(projectMilestone(project)));
   const review = rows.filter((project) => ["고객검수중", "내용증명", "법정다툼", "작업중단-고객요청"].includes(projectMilestone(project)));
   const pmCount = new Set(rows.map((project) => String(project.pm || "").trim()).filter(Boolean)).size;
-  setText("issueProjectsTitle", `이슈 프로젝트(${rows.length.toLocaleString("ko-KR")}건)`);
+  setText("issueProjectsTitle", `관리 프로젝트(${rows.length.toLocaleString("ko-KR")}건)`);
   setText("issueProjectTotal", rows.length.toLocaleString("ko-KR"));
   setText("issueProgressCount", progress.length.toLocaleString("ko-KR"));
   setText("issueReviewCount", review.length.toLocaleString("ko-KR"));
@@ -5958,7 +6481,7 @@ function renderIssueProjectSummary(rows = issueProjects()) {
 }
 
 function renderIssueProjectRows() {
-  const rows = sortedProjectRows(issueProjects(), "issues");
+  const rows = sortedProjectRows(filteredManagementProjects(), "issues");
   updateListSortUi();
   const tbody = $("issueProjectRows");
   if (!tbody) return;
@@ -5987,7 +6510,7 @@ function renderIssueProjectRows() {
           `;
         })
         .join("")
-    : '<tr><td colspan="7" class="empty-cell">이슈 체크된 프로젝트가 없습니다.</td></tr>';
+    : '<tr><td colspan="7" class="empty-cell">검색 조건에 맞는 관리 프로젝트가 없습니다.</td></tr>';
 
   tbody.querySelectorAll("[data-issue-project-id]").forEach((row) => {
     row.addEventListener("click", (event) => {
@@ -6589,7 +7112,7 @@ function renderProjectSchedules(project) {
                 <input type="checkbox" class="project-schedule-complete-input" data-schedule-entry-id="${escapeAttr(entry.id)}" ${entry.completed ? "checked" : ""} />
                 <span>완료</span>
               </label>` : ""}
-              <span class="project-schedule-date">${escapeHtml(entry.date || "-")}</span>
+              <span class="project-schedule-date">${escapeHtml(formatDetailActivityDateTime(entry.createdAt || entry.date, entry.date))}</span>
               <span class="schedule-milestone-badge">${escapeHtml(entry.milestone || "-")}</span>
               <span class="schedule-staff-badge">${escapeHtml(scheduleStaffBadgeText(entry))}</span>
             </div>
@@ -7397,6 +7920,13 @@ async function refreshProjectLibraryPosts() {
   renderProjectLibraryRows();
 }
 
+async function openProjectLibraryForProject(project) {
+  if (!project || !currentUser || isCreatingProject) return;
+  setValue("projectLibrarySearchInput", project.projectNo || project.name || "");
+  switchView("projectLibrary");
+  await refreshProjectLibraryPosts();
+}
+
 async function submitProjectLibraryForm(event) {
   event.preventDefault();
   const project = projectLibrarySelectedProject();
@@ -7554,6 +8084,7 @@ document.addEventListener("input", (event) => {
   }
   if (event.target.closest(".detail-main-grid")) updateDetailFilledState();
   if (event.target.id === "searchInput") renderRows();
+  if (event.target.id === "managementSearchInput") renderIssueProjectRows();
   if (event.target.id === "projectAssignmentSearchInput") renderProjectAssignmentRows();
   if (event.target.id === "projectLibrarySearchInput") renderProjectLibraryRows();
   if (event.target.id === "projectLibraryProjectSearch") {
@@ -7572,6 +8103,7 @@ document.addEventListener("input", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  if (["managementDueFilter", "managementIssueFilter"].includes(event.target.id)) renderIssueProjectRows();
   const assignmentSelect = event.target.closest?.("[data-project-assignment-field]");
   if (assignmentSelect) {
     const fieldConfig = PROJECT_ASSIGNMENT_FILTERS.find(({ nameField, idField }) => nameField === assignmentSelect.dataset.projectAssignmentField && idField === assignmentSelect.dataset.projectAssignmentIdField);
@@ -7613,7 +8145,7 @@ document.addEventListener("change", (event) => {
     return;
   }
   if (event.target.closest(".detail-main-grid")) updateDetailFilledState();
-  if (event.target.id === "hasIssue" || event.target.id === "monthlyCollection") updateDetailHeaderChecks();
+  if (["isUrgent", "hasIssue", "monthlyCollection"].includes(event.target.id)) updateDetailHeaderChecks();
   if (event.target.id === "pmFilter") {
     progressStatusFilter = "";
     milestoneFilter = "";
@@ -7656,6 +8188,14 @@ on("projectLibraryEditBtn", "click", () => {
 });
 
 document.addEventListener("click", (event) => {
+  const dashboardProject = event.target.closest?.("[data-dashboard-project-id]");
+  if (dashboardProject) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    openDashboardProject(dashboardProject.dataset.dashboardProjectId);
+    return;
+  }
   const editLibraryComment = event.target.closest?.("[data-project-library-edit-comment]");
   if (editLibraryComment) {
     void editProjectLibraryComment(editLibraryComment.dataset.projectLibraryEditComment);
@@ -7832,10 +8372,22 @@ on("closeDetail", "click", (event) => {
   event.stopPropagation();
   closeDetail();
 });
+on("projectLibraryAction", "click", (event) => {
+  event.stopPropagation();
+  void openProjectLibraryForProject(selectedProject());
+});
 on("sidebarRail", "click", toggleSidebar);
-on("addIssue", "click", addIssue);
+on("addIssue", "click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  addIssue();
+});
 on("addClientContact", "click", addClientContact);
-on("addCommunication", "click", addCommunication);
+on("addCommunication", "click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  addCommunication();
+});
 on("addProjectSchedule", "click", addProjectSchedule);
 on("projectCompleteAction", "click", completeSelectedProjectStage);
 on("closeProjectCompletionDialog", "click", closeProjectCompletionDialog);
@@ -7929,10 +8481,24 @@ async function initializeApp() {
 renderClock();
 setInterval(renderClock, 1000);
 window.addEventListener("resize", syncSidebarWidthToClock);
-initializeApp().catch((error) => {
-  console.error(error);
-  alert("프로젝트 데이터를 불러오지 못했습니다. 데이터 파일을 확인해 주세요.");
-});
+
+async function initializeAppWithRetry() {
+  let lastError = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      await initializeApp();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 300 * 2 ** attempt));
+      }
+    }
+  }
+  console.error("프로젝트 데이터 초기화에 실패했습니다.", lastError);
+}
+
+initializeAppWithRetry();
 
 
 

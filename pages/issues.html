@@ -2,9 +2,22 @@
         <div class="list-panel issue-project-panel">
           <div class="panel-head">
             <div>
-              <h1 id="issueProjectsTitle">이슈 프로젝트(0건)</h1>
+              <h1 id="issueProjectsTitle">관리 프로젝트(0건)</h1>
             </div>
             <button class="primary-btn" data-view-shortcut="projects" type="button">프로젝트 목록으로 이동</button>
+          </div>
+          <div class="filters management-project-filters">
+            <select id="managementDueFilter" aria-label="납기 상태">
+              <option value="">전체 납기 상태</option>
+              <option value="delayed">지연</option>
+              <option value="upcoming">임박</option>
+            </select>
+            <select id="managementIssueFilter" aria-label="이슈 여부">
+              <option value="">전체 이슈 여부</option>
+              <option value="yes">이슈 있음</option>
+              <option value="no">이슈 없음</option>
+            </select>
+            <input id="managementSearchInput" type="search" aria-label="프로젝트명 또는 PJ No 검색" placeholder="프로젝트명 또는 PJ No 검색" />
           </div>
           <div class="table-wrap issue-project-table-wrap">
             <table class="issue-projects-table">

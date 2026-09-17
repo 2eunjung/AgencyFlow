@@ -10,6 +10,10 @@
               <div class="detail-actions">
                 <input id="quoteFile" class="hidden-file" type="file" accept="application/pdf" />
                 <button id="projectCompleteAction" class="ghost-btn project-complete-action hidden" type="button">완료</button>
+                <label id="urgentCheckLabel" class="detail-issue-check" title="급건 체크">
+                  <input id="isUrgent" type="checkbox" />
+                  <span>급건</span>
+                </label>
                 <label id="issueCheckLabel" class="detail-issue-check" title="이슈 체크">
                   <input id="hasIssue" type="checkbox" />
                   <span>이슈</span>
@@ -30,6 +34,7 @@
                 <button id="quoteAction" class="detail-icon-btn" type="button" aria-label="견적서" title="견적서 등록">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="m9 15 3 3 3-3"/></svg>
                 </button>
+                <button id="projectLibraryAction" class="ghost-btn project-library-action" type="button">자료실</button>
                 <button id="closeDetail" class="ghost-btn" type="button">닫기</button>
               </div>
             </div>
@@ -110,21 +115,25 @@
               </div>
             </details>
 
-            <section class="subsection">
-              <div class="issue-head">
+            <details class="detail-dropdown subsection activity-dropdown" open>
+              <summary class="issue-head">
                 <h3>주요 이슈사항</h3>
                 <button id="addIssue" class="ghost-btn" type="button">+ 이슈 추가</button>
+              </summary>
+              <div class="detail-dropdown-body activity-dropdown-body">
+                <div id="issueList" class="issue-list"></div>
               </div>
-              <div id="issueList" class="issue-list"></div>
-            </section>
+            </details>
 
-            <section class="subsection">
-              <div class="issue-head">
+            <details class="detail-dropdown subsection activity-dropdown" open>
+              <summary class="issue-head">
                 <h3>소통내역</h3>
                 <button id="addCommunication" class="ghost-btn" type="button">+ 소통내역</button>
+              </summary>
+              <div class="detail-dropdown-body activity-dropdown-body">
+                <div id="communicationList" class="entry-list"></div>
               </div>
-              <div id="communicationList" class="entry-list"></div>
-            </section>
+            </details>
 
             <details class="detail-dropdown project-work-stack-dropdown">
               <summary>
