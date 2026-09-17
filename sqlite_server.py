@@ -59,8 +59,6 @@ SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
 }
 SESSIONS = {}
-LOGIN_FAILURE_COUNT = 0
-LOGIN_LOCKED = False
 DEFAULT_DEPARTMENTS = ("경영관리", "영업", "pm", "디자인", "퍼블리싱", "프로그램", "유지보수")
 USER_ROLES = ("admin", "team_lead", "user")
 DEFAULT_DEPARTMENT_COLORS = {
@@ -496,6 +494,16 @@ def ensure_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_admin_project_records_mode_project_no ON admin_project_records(mode, project_no)")
         create_users_secure_table(conn)
         migrate_users_secure_role_check(conn)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS login_lockouts (
+              id_lookup TEXT PRIMARY KEY,
+              failure_count INTEGER NOT NULL DEFAULT 0,
+              locked INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
         columns = [row["name"] for row in conn.execute("PRAGMA table_info(users_secure)").fetchall()]
         if "department" not in columns:
             conn.execute("ALTER TABLE users_secure ADD COLUMN department TEXT NOT NULL DEFAULT ''")
@@ -2007,7 +2015,13 @@ def is_admin(user):
 
 
 def is_team_lead(user):
-    return bool(user and user.get("role") == "team_lead")
+    return bool(
+        user
+        and (
+            user.get("role") == "team_lead"
+            or "팀장" in str(user.get("position") or "")
+        )
+    )
 
 
 def user_department(user):
@@ -2213,22 +2227,48 @@ def clear_session_token(token):
     if token:
         SESSIONS.pop(str(token), None)
 
-def login_access_locked():
-    return LOGIN_LOCKED or LOGIN_FAILURE_COUNT >= LOGIN_FAILURE_LIMIT
+def clear_user_sessions(user_id):
+    lookup = id_lookup(user_id)
+    if not lookup:
+        return
+    for token, session in list(SESSIONS.items()):
+        session_user = session.get("user") or {}
+        if id_lookup(session_user.get("id")) == lookup:
+            SESSIONS.pop(token, None)
 
 
-def record_login_failure():
-    global LOGIN_FAILURE_COUNT, LOGIN_LOCKED
-    LOGIN_FAILURE_COUNT += 1
-    if LOGIN_FAILURE_COUNT >= LOGIN_FAILURE_LIMIT:
-        LOGIN_LOCKED = True
-        SESSIONS.clear()
+def login_access_locked(conn, user_id):
+    lookup = id_lookup(user_id)
+    if not lookup:
+        return False
+    row = conn.execute("SELECT locked, failure_count FROM login_lockouts WHERE id_lookup = ?", (lookup,)).fetchone()
+    return bool(row and (row["locked"] or row["failure_count"] >= LOGIN_FAILURE_LIMIT))
 
 
-def reset_login_failures():
-    global LOGIN_FAILURE_COUNT, LOGIN_LOCKED
-    LOGIN_FAILURE_COUNT = 0
-    LOGIN_LOCKED = False
+def record_login_failure(conn, user_id):
+    lookup = id_lookup(user_id)
+    if not lookup:
+        return
+    conn.execute(
+        """
+        INSERT INTO login_lockouts (id_lookup, failure_count, locked, updated_at)
+        VALUES (?, 1, 0, CURRENT_TIMESTAMP)
+        ON CONFLICT(id_lookup) DO UPDATE SET
+          failure_count = login_lockouts.failure_count + 1,
+          locked = CASE WHEN login_lockouts.failure_count + 1 >= ? THEN 1 ELSE login_lockouts.locked END,
+          updated_at = CURRENT_TIMESTAMP
+        """,
+        (lookup, LOGIN_FAILURE_LIMIT),
+    )
+    row = conn.execute("SELECT locked FROM login_lockouts WHERE id_lookup = ?", (lookup,)).fetchone()
+    if row and row["locked"]:
+        clear_user_sessions(user_id)
+
+
+def reset_login_failures(conn, user_id):
+    lookup = id_lookup(user_id)
+    if lookup:
+        conn.execute("DELETE FROM login_lockouts WHERE id_lookup = ?", (lookup,))
 
 
 def records_as_json(conn, table, mode):
@@ -3094,18 +3134,20 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
         user_id = str(payload.get("id") or "").strip()
         password = str(payload.get("password") or "").strip()
         ip = self.client_address[0] if self.client_address else ""
-        if login_access_locked():
+        if login_access_locked(conn, user_id):
             log_login_attempt(conn, user_id, "", "user", "failure", "로그인 실패 횟수 초과", ip)
-            return self.write_json({"ok": False, "message": "로그인 시도가 5회 이상 실패하여 잠시 동안 잠겼습니다. 서버를 다시 시작해야 잠금이 해제됩니다."}, HTTPStatus.TOO_MANY_REQUESTS)
+            return self.write_json({"ok": False, "message": "해당 계정은 로그인 실패 5회 초과로 잠겼습니다. 관리자에게 비밀번호 재설정을 요청하세요."}, HTTPStatus.TOO_MANY_REQUESTS)
         row = conn.execute("SELECT * FROM users_secure WHERE id_lookup = ?", (id_lookup(user_id),)).fetchone()
         if not row:
             log_login_attempt(conn, user_id, "", "user", "failure", "아이디 또는 비밀번호 불일치", ip)
-            record_login_failure()
+            record_login_failure(conn, user_id)
+            conn.commit()
             return self.write_json({"ok": False, "message": "아이디 또는 비밀번호가 올바르지 않습니다."})
         user = public_user(row)
         if not verify_password(password, row["password"]):
             log_login_attempt(conn, user["id"], user.get("name", ""), user.get("role", "user"), "failure", "아이디 또는 비밀번호 불일치", ip)
-            record_login_failure()
+            record_login_failure(conn, user["id"])
+            conn.commit()
             return self.write_json({"ok": False, "message": "아이디 또는 비밀번호가 올바르지 않습니다."})
         if is_default_admin_password(user_id, password) and not ALLOW_WEAK_ADMIN_PASSWORD:
             log_login_attempt(conn, user["id"], user.get("name", ""), user.get("role", "user"), "failure", "?? ??? ???? ??", ip)
@@ -3113,9 +3155,10 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
         approval = normalize_approval_status(row["approval_status"], row["role"])
         if not is_active_account(row):
             log_login_attempt(conn, user["id"], user.get("name", ""), user.get("role", "user"), "failure", "비활성화 계정", ip)
-            record_login_failure()
+            record_login_failure(conn, user["id"])
+            conn.commit()
             return self.write_json({"ok": False, "message": "계정이 비활성화되었습니다. 관리자에게 문의하세요."})
-        reset_login_failures()
+        reset_login_failures(conn, user["id"])
         if password_needs_rehash(row["password"]):
             upsert_secure_user(conn, user["id"], hash_password(password), user.get("name", ""), user.get("role", "user"), approval, user.get("department", ""), user.get("position", ""), user.get("hireDate", ""), user.get("resignDate", ""))
         log_login_attempt(conn, user["id"], user.get("name", ""), user.get("role", "user"), "success", "", ip)
@@ -3142,6 +3185,7 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
             return self.write_json({"ok": False, "message": "기본 관리자 비밀번호는 사용할 수 없습니다.", "users": get_users(conn)})
         if conn.execute("SELECT 1 FROM users_secure WHERE id_lookup = ?", (id_lookup(user_id),)).fetchone():
             return self.write_json({"ok": False, "message": "이미 사용 중인 아이디입니다.", "users": get_users(conn)})
+        reset_login_failures(conn, user_id)
         upsert_secure_user(conn, user_id, hash_password(password), name[:80], role, approval, department, position, hire_date, resign_date)
         row = conn.execute("SELECT * FROM users_secure WHERE id_lookup = ?", (id_lookup(user_id),)).fetchone()
         created_user = public_user(row)
@@ -3172,6 +3216,7 @@ class SQLiteDashboardHandler(SimpleHTTPRequestHandler):
             if is_default_admin_password(current["id"], new_password):
                 return self.write_json({"ok": False, "message": "기본 관리자 비밀번호는 사용할 수 없습니다.", "users": get_users(conn)})
             password = hash_password(new_password)
+            reset_login_failures(conn, current["id"])
         upsert_secure_user(conn, current["id"], password, name, role, approval, department, position, hire_date, resign_date)
         next_row = conn.execute("SELECT * FROM users_secure WHERE id_lookup = ?", (id_lookup(current["id"]),)).fetchone()
         updated_user = public_user(next_row)

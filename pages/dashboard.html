@@ -1,24 +1,63 @@
       <section id="dashboardView" class="view active">
-        <section class="summary-grid" aria-label="프로젝트 요약">
-          <article class="summary-card">
-            <span>전체 프로젝트</span>
-            <strong id="activeCount">0</strong>
+        <section class="dashboard-action-grid" aria-label="오늘의 PM 액션">
+          <article class="dashboard-action-card" data-dashboard-alert="completion" tabindex="0">
+            <span>완료 승인 대기</span>
+            <strong id="dashboardCompletionPendingCount">0</strong>
           </article>
-          <article class="summary-card">
-            <span>진행 프로젝트</span>
-            <strong id="feedbackCount">0</strong>
+          <article class="dashboard-action-card is-risk" data-dashboard-alert="risk" data-dashboard-management tabindex="0">
+            <span>관리 프로젝트</span>
+            <strong id="dashboardRiskProjectCount">0</strong>
           </article>
-          <article class="summary-card">
-            <span>당월수금</span>
-            <strong id="monthlyCount">0</strong>
+          <article class="dashboard-action-card is-money" data-dashboard-alert="money" data-dashboard-money tabindex="0">
+            <span>수금/오픈 체크</span>
+            <strong id="dashboardMoneyCheckCount">0</strong>
           </article>
-          <article class="summary-card">
-            <span>이슈 프로젝트</span>
-            <strong id="issueCount">0</strong>
+          <article class="dashboard-action-card is-assignment" data-dashboard-alert="assignment" tabindex="0">
+            <span>미배정 프로젝트</span>
+            <strong id="dashboardAssignmentPendingCount">0</strong>
           </article>
         </section>
 
-        <section class="dashboard-schedule-grid" aria-label="프로젝트 일정 확인">
+        <section class="dashboard-focus-grid" aria-label="PM 우선 확인 목록">
+          <article class="chart-panel dashboard-focus-panel" data-dashboard-management>
+            <div class="panel-head">
+              <div>
+                <h2>관리 프로젝트</h2>
+              </div>
+              <span id="dashboardRiskUniqueCount" class="dashboard-unique-count">총 0건</span>
+              <button class="ghost-btn table-action dashboard-shortcut-btn" type="button" data-dashboard-shortcut="risk">바로가기</button>
+            </div>
+            <div id="dashboardRiskList" class="dashboard-focus-columns"></div>
+          </article>
+
+          <article class="chart-panel dashboard-focus-panel" data-dashboard-queue>
+            <div class="panel-head">
+              <div>
+                <h2>처리 대기</h2>
+              </div>
+              <span id="dashboardQueueUniqueCount" class="dashboard-unique-count">총 0건</span>
+              <button class="ghost-btn table-action dashboard-shortcut-btn" type="button" data-dashboard-shortcut="queue">바로가기</button>
+            </div>
+            <div id="dashboardQueueList" class="dashboard-focus-columns"></div>
+          </article>
+        </section>
+
+        <section class="dashboard-schedule-section" aria-label="일정">
+          <div class="dashboard-section-head">
+            <h2>일정</h2>
+          </div>
+          <div class="dashboard-schedule-grid">
+          <article class="chart-panel dashboard-schedule-panel is-incomplete">
+            <div class="panel-head">
+              <div>
+                <h2>미완료 일정</h2>
+                <p id="dashboardIncompleteScheduleDate">오늘 이전 예정</p>
+              </div>
+              <strong id="dashboardIncompleteScheduleCount" class="dashboard-schedule-count">0</strong>
+            </div>
+            <div id="dashboardIncompleteSchedules" class="dashboard-schedule-list"></div>
+          </article>
+
           <article class="chart-panel dashboard-schedule-panel">
             <div class="panel-head">
               <div>
@@ -33,17 +72,18 @@
           <article class="chart-panel dashboard-schedule-panel">
             <div class="panel-head">
               <div>
-                <h2>이번 주 확인 일정</h2>
-                <p id="dashboardWeekScheduleRange">-</p>
+                <h2>이번 주 남은 일정</h2>
+                <p id="dashboardRemainingWeekScheduleRange">-</p>
               </div>
-              <strong id="dashboardWeekScheduleCount" class="dashboard-schedule-count">0</strong>
+              <strong id="dashboardRemainingWeekScheduleCount" class="dashboard-schedule-count">0</strong>
             </div>
-            <div id="dashboardWeekSchedules" class="dashboard-schedule-list"></div>
+            <div id="dashboardRemainingWeekSchedules" class="dashboard-schedule-list"></div>
           </article>
+          </div>
         </section>
 
         <section class="dashboard-grid">
-          <article class="chart-panel">
+          <article class="chart-panel dashboard-integrated-panel">
             <div class="panel-head">
               <div>
                 <h1>통합 데이터</h1>
@@ -51,15 +91,5 @@
             </div>
             <div id="statusChart" class="bar-chart" aria-label="진행 프로젝트 PM별 마일스톤 그래프"></div>
           </article>
-
-          <article class="chart-panel narrow">
-            <div class="panel-head">
-              <div>
-                <h2>마일스톤 현황</h2>
-              </div>
-            </div>
-            <div id="statusSummary" class="status-list"></div>
-          </article>
         </section>
       </section>
-
