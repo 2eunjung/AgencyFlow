@@ -1,6 +1,6 @@
 # AgencyFlow 데이터베이스 구조 및 주요 테이블 설계
 
-> 문서 상태: 초안 v0.1 · 작성일: 2026-09-26
+> 문서 상태: 초안 v0.1 · 최종 수정일 : 2026-09-27
 >
 > 구현 확인 기준: `a0ebeb0`의 `sqlite_server.py` DDL·저장 함수 및 `static/project.js` 데이터 구조
 >
@@ -305,4 +305,4 @@ PK·UNIQUE에 따른 SQLite 내부 인덱스는 별도이다. 일부 목록 검�
 | 사용자·부서·배정의 명시적인 참조 관계 | 이름 변경·동명이인·삭제 시 일관성 개선 |
 | 공유 세션 저장소와 마이그레이션 버전 | 여러 프로세스 운영 및 배포 변경 관리 |
 
-검토 순서와 완료 기준은 [Roadmap.md](Roadmap.md)를, 기능·권한 기준은 [Requirements.md](Requirements.md)를 참고한다.
+Requirements.md와 Roadmap.md에 기재된 후속 계획 중 데이터 저장 구조와 직접 관련된 설계 후보만 이 절에 정리한다. 업무 정책과 화면 기능에 대한 개선 계획은 Requirements.md와 Roadmap.md를 참고한다
