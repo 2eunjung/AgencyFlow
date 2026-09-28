@@ -1,4 +1,5 @@
 # AgencyFlow
+<img width="1600" height="1000" alt="agencyflow_image" src="https://github.com/user-attachments/assets/b9fa33b1-47da-47ea-964b-bbeb578eb1be" />
 
 > Web Agency Project Management System  
 > 웹에이전시 PM 업무 흐름을 기반으로 만든 프로젝트·일정·연차 통합 관리 시스템
